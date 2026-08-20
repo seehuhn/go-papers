@@ -250,8 +250,11 @@ var foldReplacer = strings.NewReplacer(
 
 // Fold decodes s (see Decode) and then reduces it to a normalized,
 // case-, diacritic- and accent-insensitive form suitable for search
-// matching: unicode NFD normalization, combining-mark removal, the
-// ß/æ/ø/ł substitutions above, and lowercasing.
+// matching: unicode NFD normalization, combining-mark removal,
+// lowercasing, and the ß/æ/ø/ł substitutions above. The substitutions
+// run after lowercasing so that they also catch the uppercase originals
+// (Æ, Ø, Ł, ẞ), none of which have an NFD decomposition of their own
+// to fall back on.
 func Fold(s string) string {
 	decoded, _ := Decode(s)
 	nfd := norm.NFD.String(decoded)
@@ -259,6 +262,6 @@ func Fold(s string) string {
 	if err != nil {
 		stripped = nfd
 	}
-	replaced := foldReplacer.Replace(stripped)
-	return strings.ToLower(replaced)
+	lowered := strings.ToLower(stripped)
+	return foldReplacer.Replace(lowered)
 }

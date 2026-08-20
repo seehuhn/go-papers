@@ -44,6 +44,14 @@ func TestDecode(t *testing.T) {
 		{`\Hello`, ``, []string{"Hello"}},     // greedy tokenization: not \H + "ello"
 		{`\Hello{x}`, `x`, []string{"Hello"}}, // ditto, with a braced argument
 		{`\H o`, `ő`, nil},                    // bare accent letter, space-separated
+		{`\v{c}`, `č`, nil},                   // caron accent
+		{`\u{g}`, `ğ`, nil},                   // breve accent
+		{`\%`, `%`, nil},                      // control symbol
+		{`\_`, `_`, nil},                      // control symbol
+		{`\#`, `#`, nil},                      // control symbol
+		{`\{`, `{`, nil},                      // control symbol
+		{`\}`, `}`, nil},                      // control symbol
+		{`\@`, ``, []string{"@"}},             // unrecognized control symbol: reported unknown, char consumed
 	}
 	for _, c := range cases {
 		got, unknown := Decode(c.in)
@@ -61,6 +69,10 @@ func TestFold(t *testing.T) {
 		{`Vo{\ss}`, `voss`},
 		{`L\'evy`, `levy`},
 		{`{McKean}--{V}lasov`, `mckean–vlasov`},
+		{`\AE`, `ae`},        // uppercase literal macro folds correctly
+		{`\O`, `o`},          // uppercase literal macro folds correctly
+		{`\L`, `l`},          // uppercase literal macro folds correctly
+		{`Ørsted`, `orsted`}, // already-unicode uppercase Ø, not a macro
 	}
 	for _, c := range cases {
 		if got := Fold(c.in); got != c.want {
