@@ -80,6 +80,48 @@ func TestCheckMissingRequired(t *testing.T) {
 	}
 }
 
+// Rule 2 (any-of group): a book entry with editor but no author must not
+// report a missing author/editor problem; the same entry with neither
+// must report one.
+func TestCheckRequiredFieldGroupSatisfiedByEditor(t *testing.T) {
+	p := &Paper{
+		Key:    "essays_2020",
+		Status: "clean",
+		Bibtex: bibtex.Entry{
+			Type: "book",
+			Fields: map[string]string{
+				"editor":    "Smith, Jane",
+				"title":     "A collection of essays",
+				"publisher": "Acme Press",
+				"year":      "2020",
+			},
+		},
+		Holdings: "none",
+	}
+	if ps := CheckPaper(p); len(ps) != 0 {
+		t.Errorf("book with editor (no author) has problems: %v", ps)
+	}
+}
+
+func TestCheckRequiredFieldGroupMissingBoth(t *testing.T) {
+	p := &Paper{
+		Key:    "essays_2020",
+		Status: "clean",
+		Bibtex: bibtex.Entry{
+			Type: "book",
+			Fields: map[string]string{
+				"title":     "A collection of essays",
+				"publisher": "Acme Press",
+				"year":      "2020",
+			},
+		},
+		Holdings: "none",
+	}
+	if !problemsContain(CheckPaper(p), "author or editor") {
+		t.Error("missing required-field problem for author/editor group")
+	}
+}
+
 // Rule 3
 func TestCheckUnparsableAuthor(t *testing.T) {
 	p := makeCleanPaper()
@@ -165,10 +207,8 @@ func TestCheckCapitalizedSuspect(t *testing.T) {
 func TestCheckBraceProtectedOK(t *testing.T) {
 	p := makeCleanPaper()
 	p.Bibtex.Fields["title"] = "A study of {SPDEs} in {G}reenland"
-	for _, pr := range CheckPaper(p) {
-		if pr.Severity == "warning" && strings.Contains(pr.Msg, "capital") {
-			t.Errorf("false capitalization warning: %v", pr)
-		}
+	if ps := CheckPaper(p); len(ps) != 0 {
+		t.Errorf("brace-protected title has problems: %v", ps)
 	}
 }
 
