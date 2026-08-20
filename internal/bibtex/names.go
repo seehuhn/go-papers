@@ -194,9 +194,6 @@ func buildName(parts [][]string) (Name, error) {
 	}
 
 	p := parts[0]
-	if len(p) == 0 {
-		return Name{}, fmt.Errorf("empty name")
-	}
 
 	// von = the maximal sequence of words in p (excluding the very last
 	// word, which must be part of "last") that start with a lower-case
@@ -211,13 +208,22 @@ func buildName(parts [][]string) (Name, error) {
 	var first, von, last, jr string
 	switch len(parts) {
 	case 1:
-		// "First von Last"
+		// "First von Last". This is the only form where an empty p is
+		// an error: von/last are derived entirely from p, so an empty p
+		// leaves no word to serve as "last" (matching the Python
+		// original, which raises IndexError on p[-1] here). In the
+		// 2- and 3-part forms below, an empty p just yields an empty
+		// "last" - not an error - because "first" (and "jr") come from
+		// the other parts.
 		if len(ii) > 0 {
 			minI, maxI := ii[0], ii[len(ii)-1]
 			first = strings.Join(p[:minI], " ")
 			von = strings.Join(p[minI:maxI+1], " ")
 			last = strings.Join(p[maxI+1:], " ")
 		} else {
+			if len(p) == 0 {
+				return Name{}, fmt.Errorf("empty name")
+			}
 			first = strings.Join(p[:len(p)-1], " ")
 			last = p[len(p)-1]
 		}

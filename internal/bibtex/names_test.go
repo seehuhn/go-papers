@@ -71,6 +71,14 @@ func TestParseNames(t *testing.T) {
 		// Additional coverage of the original s6py.bibtex.author.parse
 		// behaviour: an empty input string parses to no authors.
 		{"", nil},
+
+		// A comma-led name with an empty first part ("von Last" part is
+		// empty) is NOT an error: the Python original only crashes
+		// (IndexError) when len(parts) == 1 and p is empty. For the
+		// 2-part form here, "first" comes from parts[1] and "last" is
+		// just the empty-string join of an empty p.
+		{", John",
+			[]Name{{First: "John"}}},
 	}
 	for _, c := range cases {
 		got, err := ParseNames(c.in)
