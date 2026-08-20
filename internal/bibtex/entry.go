@@ -23,8 +23,8 @@ import (
 
 // Entry represents a BibTeX entry with a type and fields.
 type Entry struct {
-	Type   string            // e.g., "article", "book", "inproceedings"
-	Fields map[string]string // field names to values (already bibtex-encoded)
+	Type   string            `json:"type"`   // e.g., "article", "book", "inproceedings"
+	Fields map[string]string `json:"fields"` // field names to values (already bibtex-encoded)
 }
 
 // FieldOrder defines the canonical order for bibtex fields.
