@@ -58,20 +58,23 @@ func MakeKey(authorField, year string) (string, error) {
 	// Apply tex.Fold for normalization
 	folded := tex.Fold(processedName)
 
-	// Keep only [a-z-] characters (spaces become hyphens as per Fold)
+	// Keep only [a-z-] characters, filtering out all other characters
 	var result strings.Builder
+	hasLetter := false
 	for _, r := range folded {
-		if (r >= 'a' && r <= 'z') || r == '-' {
+		if r >= 'a' && r <= 'z' {
+			result.WriteRune(r)
+			hasLetter = true
+		} else if r == '-' {
 			result.WriteRune(r)
 		}
 	}
 
-	key := result.String()
-	if key == "" {
+	if !hasLetter {
 		return "", fmt.Errorf("no usable letters in author name")
 	}
 
-	return key + "_" + year, nil
+	return result.String() + "_" + year, nil
 }
 
 // FreeKey returns an unused citation key based on the given base.

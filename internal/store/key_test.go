@@ -47,6 +47,9 @@ func TestMakeKey(t *testing.T) {
 	if _, err := MakeKey("", "1963"); err == nil {
 		t.Error("expected error for empty author")
 	}
+	if _, err := MakeKey("{ }, X", "1963"); err == nil {
+		t.Error("expected error for degenerate author field with no usable letters")
+	}
 }
 
 func TestFreeKey(t *testing.T) {
