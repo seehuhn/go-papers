@@ -17,8 +17,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"sort"
 
 	"seehuhn.de/go/paper/internal/bibtex"
@@ -65,12 +67,28 @@ func runBib(args []string) error {
 			return fmt.Errorf("paper bib: %w", err)
 		}
 	} else {
-		// Load specified keys
-		papers = make([]*store.Paper, 0, len(keys))
+		// Deduplicate keys while preserving order
+		seen := make(map[string]bool)
+		uniqueKeys := make([]string, 0, len(keys))
 		for _, key := range keys {
+			if !seen[key] {
+				seen[key] = true
+				uniqueKeys = append(uniqueKeys, key)
+			}
+		}
+
+		// Load specified keys
+		papers = make([]*store.Paper, 0, len(uniqueKeys))
+		for _, key := range uniqueKeys {
 			p, err := s.Load(key)
 			if err != nil {
-				return fmt.Errorf("paper bib: paper %q not found; try 'paper search %s'", key, key)
+				// Check if this is a "not found" error (entry directory or paper.json doesn't exist)
+				// vs. an actual load/parse error (corrupted JSON, permissions, etc.)
+				if errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("paper bib: paper %q not found; try 'paper search %s'", key, key)
+				}
+				// For other errors, report the underlying issue
+				return fmt.Errorf("paper bib: cannot load paper %q: %w", key, err)
 			}
 			papers = append(papers, p)
 		}

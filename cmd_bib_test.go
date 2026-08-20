@@ -17,6 +17,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -131,5 +133,40 @@ func TestBibNoArgs(t *testing.T) {
 	fixtureStore(t)
 	if err := runBib([]string{}); err == nil {
 		t.Error("expected error when neither -all nor keys given")
+	}
+}
+
+func TestBibDuplicateKeys(t *testing.T) {
+	s, _ := fixtureStore(t)
+	s.Save(cleanPaper("hoeffding_1963"))
+
+	// Request same key twice; should appear exactly once in output
+	out := captureStdout(t, func() {
+		if err := runBib([]string{"hoeffding_1963", "hoeffding_1963"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// Count occurrences of the entry header
+	count := strings.Count(out, "@article{hoeffding_1963,")
+	if count != 1 {
+		t.Errorf("entry appeared %d times, want exactly 1:\n%s", count, out)
+	}
+}
+
+func TestBibCorruptedPaperJSON(t *testing.T) {
+	_, dir := fixtureStore(t)
+	entryDir := filepath.Join(dir, "broken_1900")
+	if err := os.MkdirAll(entryDir, 0o755); err != nil {
+		t.Fatalf("creating entry directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(entryDir, "paper.json"), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatalf("writing corrupt paper.json: %v", err)
+	}
+
+	if err := runBib([]string{"broken_1900"}); err == nil {
+		t.Error("expected error for corrupted paper.json")
+	} else if !strings.Contains(err.Error(), "cannot load") {
+		t.Errorf("error should mention 'cannot load', got: %v", err)
 	}
 }
