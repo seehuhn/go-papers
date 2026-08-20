@@ -30,3 +30,9 @@ func TestDispatchHelp(t *testing.T) {
 		t.Fatalf("help failed: %v", err)
 	}
 }
+
+func TestDispatchEmpty(t *testing.T) {
+	if err := dispatch(nil); err != nil {
+		t.Fatalf("dispatch with nil args failed: %v", err)
+	}
+}
