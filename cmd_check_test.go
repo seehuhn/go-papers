@@ -17,7 +17,6 @@
 package main
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,27 +25,6 @@ import (
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/store"
 )
-
-// captureStdout runs fn with os.Stdout redirected to a pipe and returns
-// everything fn printed, alongside fn's own return value.
-func captureStdout(t *testing.T, fn func() error) (string, error) {
-	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("creating pipe: %v", err)
-	}
-	os.Stdout = w
-	runErr := fn()
-	w.Close()
-	os.Stdout = old
-
-	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("reading captured stdout: %v", err)
-	}
-	return string(data), runErr
-}
 
 func fixtureStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
@@ -131,8 +109,9 @@ func TestCheckMismatchReportsUnderDirName(t *testing.T) {
 	s.Save(p)
 	os.Rename(filepath.Join(dir, "hoeffding_1963"), filepath.Join(dir, "wrong_1963"))
 
-	out, err := captureStdout(t, func() error { return runCheck(nil) })
-	if err == nil {
+	var runErr error
+	out := captureStdout(t, func() { runErr = runCheck(nil) })
+	if runErr == nil {
 		t.Fatal("expected error for key/dirname mismatch plus DOI problem")
 	}
 
@@ -162,8 +141,9 @@ func TestCheckCorruptEntryReportedOnce(t *testing.T) {
 		t.Fatalf("writing corrupt paper.json: %v", err)
 	}
 
-	out, err := captureStdout(t, func() error { return runCheck(nil) })
-	if err == nil {
+	var runErr error
+	out := captureStdout(t, func() { runErr = runCheck(nil) })
+	if runErr == nil {
 		t.Fatal("expected error for corrupt paper.json")
 	}
 
