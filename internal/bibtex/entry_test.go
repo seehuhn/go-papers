@@ -25,14 +25,15 @@ func TestFormatGolden(t *testing.T) {
 	e := Entry{
 		Type: "article",
 		Fields: map[string]string{
-			"author":  "Hoeffding, Wassily",
-			"title":   "Probability inequalities for sums of bounded random variables",
-			"journal": "Journal of the American Statistical Association",
-			"volume":  "58",
-			"number":  "301",
-			"pages":   "13--30",
-			"year":    "1963",
+			// Fields deliberately not in FieldOrder sequence to test deterministic sorting
 			"doi":     "10.1080/01621459.1963.10500830",
+			"author":  "Hoeffding, Wassily",
+			"year":    "1963",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"pages":   "13--30",
+			"journal": "Journal of the American Statistical Association",
+			"number":  "301",
+			"volume":  "58",
 		},
 	}
 	got := Format("hoeffding_1963", e)
@@ -48,5 +49,41 @@ func TestFormatGolden(t *testing.T) {
 func TestRequiredFields(t *testing.T) {
 	if _, ok := RequiredFields["article"]; !ok {
 		t.Fatal("no required fields for article")
+	}
+}
+
+func TestFormatUnknownFields(t *testing.T) {
+	// Test that unknown fields are sorted alphabetically after known fields.
+	// This test uses unknown fields (zzz, abstract, mrnumber) mixed with known ones.
+	e := Entry{
+		Type: "article",
+		Fields: map[string]string{
+			// Known fields
+			"author": "Smith, John",
+			"title":  "A Test Article",
+			"year":   "2024",
+			// Unknown fields in intentionally mixed order in the map
+			"zzz":       "last alphabetically",
+			"abstract":  "first alphabetically",
+			"mrnumber":  "middle alphabetically",
+			"journal":   "Test Journal",
+		},
+	}
+	got := Format("test_key", e)
+
+	// Expected output: known fields in FieldOrder, then unknown fields alphabetically
+	want := `@article{test_key,
+  author = {Smith, John},
+  title = {A Test Article},
+  journal = {Test Journal},
+  year = {2024},
+  abstract = {first alphabetically},
+  mrnumber = {middle alphabetically},
+  zzz = {last alphabetically},
+}
+`
+
+	if got != want {
+		t.Errorf("Format mismatch:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
