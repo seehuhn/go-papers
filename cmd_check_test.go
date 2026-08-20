@@ -17,13 +17,36 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/store"
 )
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns
+// everything fn printed, alongside fn's own return value.
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating pipe: %v", err)
+	}
+	os.Stdout = w
+	runErr := fn()
+	w.Close()
+	os.Stdout = old
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stdout: %v", err)
+	}
+	return string(data), runErr
+}
 
 func fixtureStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
@@ -91,5 +114,61 @@ func TestCheckUnknownKeyArg(t *testing.T) {
 	fixtureStore(t)
 	if err := runCheck([]string{"nope_1900"}); err == nil {
 		t.Error("expected error for unknown key")
+	}
+}
+
+// TestCheckMismatchReportsUnderDirName covers an entry that is both
+// dirname/key mismatched AND has its own CheckPaper error (an invalid
+// DOI). Both problems must be printed under the directory's name
+// ("wrong_1963"), not under the stale key recorded inside paper.json
+// ("hoeffding_1963") - the directory name is the only identity that
+// still resolves to a loadable entry.
+func TestCheckMismatchReportsUnderDirName(t *testing.T) {
+	s, dir := fixtureStore(t)
+	p := cleanPaper("hoeffding_1963")
+	p.DOI = "not-a-doi"
+	p.Bibtex.Fields["doi"] = "not-a-doi"
+	s.Save(p)
+	os.Rename(filepath.Join(dir, "hoeffding_1963"), filepath.Join(dir, "wrong_1963"))
+
+	out, err := captureStdout(t, func() error { return runCheck(nil) })
+	if err == nil {
+		t.Fatal("expected error for key/dirname mismatch plus DOI problem")
+	}
+
+	if strings.Contains(out, "hoeffding_1963:") {
+		t.Errorf("output still uses the stale paper.json key, want only the directory name:\n%s", out)
+	}
+	if !strings.Contains(out, `wrong_1963: error: directory name "wrong_1963" does not match paper.json key "hoeffding_1963"`) {
+		t.Errorf("missing dirname/key mismatch line under the directory name:\n%s", out)
+	}
+	if !strings.Contains(out, "wrong_1963: error: doi:") {
+		t.Errorf("missing CheckPaper DOI error line under the directory name:\n%s", out)
+	}
+}
+
+// TestCheckCorruptEntryReportedOnce covers a corrupt paper.json during a
+// whole-store run: runCheck loads every entry once, and both the
+// per-entry CheckPaper pass and fsck's store-wide pass need that same
+// load result, so the "cannot load entry" problem must appear exactly
+// once, not once per pass.
+func TestCheckCorruptEntryReportedOnce(t *testing.T) {
+	_, dir := fixtureStore(t)
+	entryDir := filepath.Join(dir, "broken_1900")
+	if err := os.MkdirAll(entryDir, 0o755); err != nil {
+		t.Fatalf("creating entry directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(entryDir, "paper.json"), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatalf("writing corrupt paper.json: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error { return runCheck(nil) })
+	if err == nil {
+		t.Fatal("expected error for corrupt paper.json")
+	}
+
+	count := strings.Count(out, "cannot load entry")
+	if count != 1 {
+		t.Errorf(`"cannot load entry" appeared %d times, want exactly 1:%s%s`, count, "\n", out)
 	}
 }

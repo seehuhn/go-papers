@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"seehuhn.de/go/paper/internal/store"
@@ -28,6 +29,17 @@ import (
 
 func init() {
 	commands = append(commands, command{"check", "validate entries and store invariants", runCheck})
+}
+
+// entryLoad is the result of loading one entry by its directory name: the
+// name itself, the parsed paper (nil on failure), and any load error. It
+// is the unit of work shared between runCheck's per-entry CheckPaper pass
+// and fsck's store-wide invariant pass, so that each entry's paper.json is
+// read from disk exactly once per "paper check" run.
+type entryLoad struct {
+	dirKey string
+	paper  *store.Paper
+	err    error
 }
 
 // runCheck implements the "paper check" command: it validates one or
@@ -49,14 +61,29 @@ func runCheck(args []string) error {
 	}
 
 	keys := fs.Args()
+	wholeStore := len(keys) == 0
+	if wholeStore {
+		allKeys, err := s.Keys()
+		if err != nil {
+			return fmt.Errorf("paper check: %w", err)
+		}
+		keys = allKeys
+	}
 
-	// entryResult tracks, for one entry, the paper as loaded plus the
-	// count of error-severity problems found for it so far. Errors are
-	// tracked per directory name (rather than per Paper.Key) so that a
-	// directory-name/key mismatch — itself an error reported by fsck —
-	// reliably blocks draft promotion for that entry, even though the
-	// mismatch problem and the entry's own paper.json disagree about
-	// what its key is.
+	// Load every selected entry exactly once. The load results feed both
+	// the per-entry CheckPaper pass below and, for a whole-store run,
+	// fsck's store-wide invariant checks - so a corrupt paper.json is
+	// reported once, not once per pass.
+	loads := make([]entryLoad, 0, len(keys))
+	for _, key := range keys {
+		p, err := s.Load(key)
+		loads = append(loads, entryLoad{dirKey: key, paper: p, err: err})
+	}
+
+	// entryResult tracks, for one successfully loaded entry, the paper
+	// plus the count of error-severity problems found for it so far, so
+	// that draft promotion below can see the combined result of both the
+	// CheckPaper pass and (for whole-store runs) the fsck pass.
 	type entryResult struct {
 		dirKey string
 		paper  *store.Paper
@@ -67,37 +94,32 @@ func runCheck(args []string) error {
 	var results []*entryResult
 	byDir := make(map[string]*entryResult)
 
-	loadAndCheck := func(dirKey string) {
-		p, err := s.Load(dirKey)
-		if err != nil {
-			problems = append(problems, store.Problem{Key: dirKey, Severity: "error",
-				Msg: fmt.Sprintf("cannot load entry: %v", err)})
-			return
+	for _, l := range loads {
+		if l.err != nil {
+			problems = append(problems, store.Problem{Key: l.dirKey, Severity: "error",
+				Msg: fmt.Sprintf("cannot load entry: %v", l.err)})
+			continue
 		}
-		r := &entryResult{dirKey: dirKey, paper: p}
-		for _, prob := range store.CheckPaper(p) {
+		r := &entryResult{dirKey: l.dirKey, paper: l.paper}
+		for _, prob := range store.CheckPaper(l.paper) {
+			// CheckPaper reports problems under Paper.Key, the key
+			// recorded inside paper.json. Rewrite it to the directory
+			// name so that, even when the two disagree (a mismatch fsck
+			// itself flags below), every problem for one physical entry
+			// is printed and tallied under the same, dereferenceable
+			// identity.
+			prob.Key = l.dirKey
 			problems = append(problems, prob)
 			if prob.Severity == "error" {
 				r.errors++
 			}
 		}
 		results = append(results, r)
-		byDir[dirKey] = r
+		byDir[l.dirKey] = r
 	}
 
-	if len(keys) > 0 {
-		for _, key := range keys {
-			loadAndCheck(key)
-		}
-	} else {
-		allKeys, err := s.Keys()
-		if err != nil {
-			return fmt.Errorf("paper check: %w", err)
-		}
-		for _, key := range allKeys {
-			loadAndCheck(key)
-		}
-		for _, prob := range fsck(s) {
+	if wholeStore {
+		for _, prob := range fsck(s, loads) {
 			problems = append(problems, prob)
 			if prob.Severity == "error" {
 				if r, ok := byDir[prob.Key]; ok {
@@ -138,27 +160,23 @@ func runCheck(args []string) error {
 	return nil
 }
 
-// fsck checks store-wide invariants that CheckPaper cannot see because
-// it only looks at a single Paper value: directory-name/key mismatches,
-// Versions entries with no file on disk, files in an entry directory
-// that are not listed in Versions, and stray sync-conflict files
-// anywhere in the store.
-func fsck(s *store.Store) []store.Problem {
+// fsck checks store-wide invariants that CheckPaper cannot see because it
+// only looks at a single Paper value: directory-name/key mismatches,
+// Versions entries with no file on disk, files in an entry directory that
+// are not listed in Versions, and stray sync-conflict files anywhere in
+// the store. loads is the set of entries already read from disk by the
+// caller (runCheck); fsck reuses that data instead of reloading each
+// paper.json itself, so a load failure is reported exactly once overall.
+func fsck(s *store.Store, loads []entryLoad) []store.Problem {
 	var problems []store.Problem
 
-	keys, err := s.Keys()
-	if err != nil {
-		return []store.Problem{{Key: "<store>", Severity: "error",
-			Msg: fmt.Sprintf("listing store: %v", err)}}
-	}
-
-	for _, key := range keys {
-		p, err := s.Load(key)
-		if err != nil {
-			problems = append(problems, store.Problem{Key: key, Severity: "error",
-				Msg: fmt.Sprintf("cannot load entry: %v", err)})
+	for _, l := range loads {
+		if l.err != nil {
+			// Already reported once by the caller's own load pass.
 			continue
 		}
+		key := l.dirKey
+		p := l.paper
 
 		if p.Key != key {
 			problems = append(problems, store.Problem{Key: key, Severity: "error",
@@ -167,8 +185,15 @@ func fsck(s *store.Store) []store.Problem {
 
 		dir := s.Dir(key)
 
-		// Files listed in Versions but missing on disk.
+		// Files listed in Versions but missing on disk. Versions filenames
+		// are sorted first so output order is stable across runs (map
+		// iteration order is not).
+		filenames := make([]string, 0, len(p.Versions))
 		for filename := range p.Versions {
+			filenames = append(filenames, filename)
+		}
+		sort.Strings(filenames)
+		for _, filename := range filenames {
 			path := filepath.Join(dir, filename)
 			if _, err := os.Stat(path); err != nil {
 				problems = append(problems, store.Problem{Key: key, Severity: "error",
