@@ -43,8 +43,8 @@ type searchFields struct {
 	abstract string // tex.Fold(Abstract)
 }
 
-// fieldWeight is the score awarded for a search term matching one field,
-// per the weights given in the task-9 brief.
+// Field weights for search scoring: the score awarded for a search term
+// matching one field, per the weights given in the task-9 brief.
 const (
 	weightKey    = 5
 	weightID     = 5 // DOI or arXiv ID

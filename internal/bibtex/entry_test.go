@@ -63,10 +63,10 @@ func TestFormatUnknownFields(t *testing.T) {
 			"title":  "A Test Article",
 			"year":   "2024",
 			// Unknown fields in intentionally mixed order in the map
-			"zzz":       "last alphabetically",
-			"abstract":  "first alphabetically",
-			"mrnumber":  "middle alphabetically",
-			"journal":   "Test Journal",
+			"zzz":      "last alphabetically",
+			"abstract": "first alphabetically",
+			"mrnumber": "middle alphabetically",
+			"journal":  "Test Journal",
 		},
 	}
 	got := Format("test_key", e)

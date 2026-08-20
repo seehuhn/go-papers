@@ -19,6 +19,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"seehuhn.de/go/paper/internal/bibtex"
@@ -85,6 +86,40 @@ func TestKeysSkipsJunk(t *testing.T) {
 	}
 	if len(keys) != 1 || keys[0] != "b_2001" {
 		t.Errorf("Keys() = %v, want [b_2001]", keys)
+	}
+}
+
+// TestLoadRejectsUnknownMembers covers an agent typo (e.g. "absract"
+// instead of "abstract") in paper.json. Before this fix, json.Unmarshal
+// silently dropped the unrecognized member, and check's draft promotion
+// would then rewrite paper.json from the in-memory struct, physically
+// deleting the typo'd data. Load must instead fail, so the problem
+// surfaces (as "paper check" reporting "cannot load entry ...") instead of
+// silently destroying data.
+func TestLoadRejectsUnknownMembers(t *testing.T) {
+	s := testStore(t)
+	dir := filepath.Join(s.Root, "voss_2004")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := `{
+  "key": "voss_2004",
+  "status": "clean",
+  "holdings": "none",
+  "absract": "a typo'd top-level member",
+  "bibtex": {"type": "misc", "fields": {}}
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "paper.json"), []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.Load("voss_2004")
+	if err == nil {
+		t.Fatal("expected an error for an unknown top-level member")
+	}
+	if !strings.Contains(err.Error(), "absract") {
+		t.Errorf("error should mention the unknown member %q: %v", "absract", err)
 	}
 }
 

@@ -88,7 +88,7 @@ func (s *Store) Load(key string) (*Paper, error) {
 	}
 
 	var p Paper
-	if err := json.Unmarshal(data, &p); err != nil {
+	if err := json.Unmarshal(data, &p, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("loading paper %q from %s: %w", key, path, err)
 	}
 

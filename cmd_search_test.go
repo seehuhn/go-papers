@@ -75,6 +75,39 @@ func TestSearchNoTermsNoFilterErrors(t *testing.T) {
 	}
 }
 
+// TestSearchHumanFlagsDraftAndDeprecated covers the human ("paper search",
+// no -json) output format: the spec's CLI table and README promise that
+// human output flags drafts and deprecated versions the same way the JSON
+// "flags" array does. Before this fix, only the "[holdings]" marker was
+// printed; "[draft]" and "[deprecated:<file>]" were silently dropped.
+func TestSearchHumanFlagsDraftAndDeprecated(t *testing.T) {
+	s, _ := fixtureStore(t)
+	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "draft", Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Hoeffding, Wassily",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"journal": "Journal of the American Statistical Association",
+			"year":    "1963"}},
+		Versions: map[string]store.Version{
+			"hoeffding.pdf": {Deprecated: true},
+		},
+	})
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runSearch([]string{"hoeffding"})
+	})
+	if runErr != nil {
+		t.Fatalf("runSearch: %v", runErr)
+	}
+	if !strings.Contains(out, "[draft]") {
+		t.Errorf("expected human output to contain [draft]:\n%s", out)
+	}
+	if !strings.Contains(out, "[deprecated:hoeffding.pdf]") {
+		t.Errorf("expected human output to contain [deprecated:hoeffding.pdf]:\n%s", out)
+	}
+}
+
 func TestSearchNoTermsWithFilterReturnsAll(t *testing.T) {
 	s, _ := fixtureStore(t)
 	saveSearchFixture(t, s)

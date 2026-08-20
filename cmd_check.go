@@ -101,12 +101,25 @@ func runCheck(args []string) error {
 			continue
 		}
 		r := &entryResult{dirKey: l.dirKey, paper: l.paper}
+
+		// Directory name / paper.json key mismatch. This is checked here,
+		// in the per-entry loop, rather than only in fsck's whole-store
+		// pass, so that "paper check <dir>" (explicit-key mode) catches it
+		// too: promoting a mismatched draft would make s.Save write to
+		// s.Dir(p.Key) - the stale body key - creating a new directory
+		// while the old one keeps the draft file behind.
+		if l.paper.Key != l.dirKey {
+			problems = append(problems, store.Problem{Key: l.dirKey, Severity: "error",
+				Msg: fmt.Sprintf("directory name %q does not match paper.json key %q", l.dirKey, l.paper.Key)})
+			r.errors++
+		}
+
 		for _, prob := range store.CheckPaper(l.paper) {
 			// CheckPaper reports problems under Paper.Key, the key
 			// recorded inside paper.json. Rewrite it to the directory
-			// name so that, even when the two disagree (a mismatch fsck
-			// itself flags below), every problem for one physical entry
-			// is printed and tallied under the same, dereferenceable
+			// name so that, even when the two disagree (a mismatch
+			// checked above), every problem for one physical entry is
+			// printed and tallied under the same, dereferenceable
 			// identity.
 			prob.Key = l.dirKey
 			problems = append(problems, prob)
@@ -161,12 +174,14 @@ func runCheck(args []string) error {
 }
 
 // fsck checks store-wide invariants that CheckPaper cannot see because it
-// only looks at a single Paper value: directory-name/key mismatches,
-// Versions entries with no file on disk, files in an entry directory that
-// are not listed in Versions, and stray sync-conflict files anywhere in
-// the store. loads is the set of entries already read from disk by the
-// caller (runCheck); fsck reuses that data instead of reloading each
-// paper.json itself, so a load failure is reported exactly once overall.
+// only looks at a single Paper value: Versions entries with no file on
+// disk, files in an entry directory that are not listed in Versions, and
+// stray sync-conflict files anywhere in the store. (The directory-name/key
+// mismatch check that used to live here has moved to runCheck's per-entry
+// loop, so it also fires in explicit-key mode.) loads is the set of entries
+// already read from disk by the caller (runCheck); fsck reuses that data
+// instead of reloading each paper.json itself, so a load failure is
+// reported exactly once overall.
 func fsck(s *store.Store, loads []entryLoad) []store.Problem {
 	var problems []store.Problem
 
@@ -178,10 +193,9 @@ func fsck(s *store.Store, loads []entryLoad) []store.Problem {
 		key := l.dirKey
 		p := l.paper
 
-		if p.Key != key {
-			problems = append(problems, store.Problem{Key: key, Severity: "error",
-				Msg: fmt.Sprintf("directory name %q does not match paper.json key %q", key, p.Key)})
-		}
+		// The directory-name/key mismatch check now lives in runCheck's
+		// per-entry loop (above), so that it fires in explicit-key mode
+		// too, not just here in the whole-store pass.
 
 		dir := s.Dir(key)
 

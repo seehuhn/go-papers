@@ -154,8 +154,10 @@ func hitFlags(p *store.Paper) []string {
 }
 
 // printSearchHuman prints one line per hit to stdout, in the format:
-// "<key>  <Author> (<year>)  <title>  [<holdings>]", with the title
-// truncated as needed to keep the line within maxHitLineRunes runes.
+// "<key>  <Author> (<year>)  <title>  [<holdings>] [draft] [deprecated:<file>]",
+// with the title truncated as needed to keep the line within
+// maxHitLineRunes runes. The draft/deprecated markers use the same
+// hitFlags logic as the JSON "flags" array.
 func printSearchHuman(hits []store.Hit) {
 	for _, h := range hits {
 		fmt.Println(formatHitLine(h))
@@ -178,8 +180,16 @@ func formatHitLine(h store.Hit) string {
 		prefixParts = append(prefixParts, whoYear)
 	}
 	prefix := strings.Join(prefixParts, "  ") + "  "
-	suffix := "  " + holdings
 
+	suffix := "  " + holdings
+	for _, flag := range hitFlags(p) {
+		suffix += fmt.Sprintf(" [%s]", flag)
+	}
+
+	// The title is truncated first to keep the whole line within
+	// maxHitLineRunes runes; when the flags themselves are long (e.g.
+	// several deprecated files), the line may still exceed the budget -
+	// the flags are never dropped or truncated to make it fit.
 	budget := maxHitLineRunes - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix)
 	title = truncateRunes(title, budget)
 

@@ -126,6 +126,48 @@ func TestCheckMismatchReportsUnderDirName(t *testing.T) {
 	}
 }
 
+// TestCheckExplicitKeyFindsMismatch covers "paper check <dir>" (explicit-key
+// mode, not whole-store fsck) on an entry whose paper.json key differs from
+// its directory name. Previously the dirname/key mismatch check ran only in
+// fsck, so this case slipped through: the entry was reported clean, its
+// draft status would be promoted, and s.Save(p) would then write to
+// s.Dir(p.Key) - creating a NEW directory under the stale body key while the
+// old directory kept the draft file behind. The check must fire, under the
+// directory name, in explicit-key mode too, and the entry must not be
+// promoted or duplicated into a second directory.
+func TestCheckExplicitKeyFindsMismatch(t *testing.T) {
+	s, dir := fixtureStore(t)
+	p := cleanPaper("hoeffding_1963")
+	p.Status = "draft"
+	s.Save(p)
+	os.Rename(filepath.Join(dir, "hoeffding_1963"), filepath.Join(dir, "wrong_1963"))
+
+	var runErr error
+	out := captureStdout(t, func() { runErr = runCheck([]string{"wrong_1963"}) })
+	if runErr == nil {
+		t.Fatal("expected error for key/dirname mismatch in explicit-key mode")
+	}
+	if !strings.Contains(out, `wrong_1963: error: directory name "wrong_1963" does not match paper.json key "hoeffding_1963"`) {
+		t.Errorf("missing dirname/key mismatch line under the directory name:\n%s", out)
+	}
+	if strings.Contains(out, "promoted") {
+		t.Errorf("mismatched entry must not be promoted:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hoeffding_1963")); err == nil {
+		t.Error("a new directory named after the stale body key must not be created")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wrong_1963", "paper.json")); err != nil {
+		t.Errorf("original directory's paper.json should still be there: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "wrong_1963", "paper.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"status": "draft"`) {
+		t.Errorf("draft must not have been promoted to clean:\n%s", got)
+	}
+}
+
 // TestCheckCorruptEntryReportedOnce covers a corrupt paper.json during a
 // whole-store run: runCheck loads every entry once, and both the
 // per-entry CheckPaper pass and fsck's store-wide pass need that same
