@@ -39,6 +39,11 @@ func TestDecode(t *testing.T) {
 		{`$L^2$-convergence`, `$L^2$-convergence`, nil}, // math verbatim
 		{`$\alpha$-stable`, `$\alpha$-stable`, nil},     // no unknown macro in math
 		{`\foo{bar}`, `bar`, []string{"foo"}},
+		{`Stra\ss e`, `Straße`, nil},          // control word absorbs trailing whitespace
+		{`Gau{\ss}`, `Gauß`, nil},             // braced form unaffected by whitespace rule
+		{`\Hello`, ``, []string{"Hello"}},     // greedy tokenization: not \H + "ello"
+		{`\Hello{x}`, `x`, []string{"Hello"}}, // ditto, with a braced argument
+		{`\H o`, `ő`, nil},                    // bare accent letter, space-separated
 	}
 	for _, c := range cases {
 		got, unknown := Decode(c.in)

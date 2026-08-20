@@ -33,20 +33,27 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// accentMarks maps a single-byte TeX accent command character to the
-// unicode combining mark it represents. The base letter is combined with
-// this mark and then NFC-normalized, so that precomposed characters are
-// used whenever one exists.
-var accentMarks = map[byte]rune{
+// letterAccentMarks maps a single-letter TeX accent control word (\H, \c,
+// \v, \u) to the unicode combining mark it represents. These are control
+// words, not control symbols, so they only apply when the control word's
+// full (greedily tokenized) name is exactly that one letter - \Hello is
+// the unknown macro "Hello", not \H applied to "ello".
+var letterAccentMarks = map[byte]rune{
+	'H': 0x030B, // combining double acute accent (Hungarian)
+	'c': 0x0327, // combining cedilla
+	'v': 0x030C, // combining caron
+	'u': 0x0306, // combining breve
+}
+
+// symbolAccentMarks maps a single-byte TeX accent control symbol
+// (backslash followed by exactly one non-letter character) to the
+// unicode combining mark it represents.
+var symbolAccentMarks = map[byte]rune{
 	'`':  0x0300, // combining grave accent
 	'\'': 0x0301, // combining acute accent
 	'^':  0x0302, // combining circumflex accent
 	'"':  0x0308, // combining diaeresis
 	'~':  0x0303, // combining tilde
-	'H':  0x030B, // combining double acute accent (Hungarian)
-	'c':  0x0327, // combining cedilla
-	'v':  0x030C, // combining caron
-	'u':  0x0306, // combining breve
 	'=':  0x0304, // combining macron
 	'.':  0x0307, // combining dot above
 }
@@ -78,6 +85,14 @@ var controlSymbols = map[byte]string{
 
 func isASCIILetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func isASCIISpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\v', '\f':
+		return true
+	}
+	return false
 }
 
 // noBreakSpace is U+00A0 NO-BREAK SPACE, the expansion of TeX's `~`.
@@ -150,31 +165,36 @@ func decodeMacro(s string, i int) (newI int, repl string, unknown string) {
 		return i + 1, "", ""
 	}
 
-	// Accent macros: \<accent>{<letter>} or \<accent><letter>.
-	if mark, ok := accentMarks[s[i+1]]; ok {
-		rest := s[i+2:]
-		if len(rest) >= 3 && rest[0] == '{' && isASCIILetter(rest[1]) && rest[2] == '}' {
-			composed := norm.NFC.String(string(rest[1]) + string(mark))
-			return i + 5, composed, ""
-		}
-		if len(rest) >= 1 && isASCIILetter(rest[0]) {
-			composed := norm.NFC.String(string(rest[0]) + string(mark))
-			return i + 3, composed, ""
-		}
-		// Not a well-formed accent construct; fall through and treat
-		// s[i+1] as an ordinary macro name character.
-	}
-
-	// Control words: backslash followed by one or more letters. The
-	// macro name ends at the first non-letter (word-boundary rule).
 	if isASCIILetter(s[i+1]) {
+		// Control words are tokenized greedily, like real LaTeX: the
+		// macro name is the maximal run of letters after the backslash.
+		// Only then do we decide what the macro is - this avoids, e.g.,
+		// misreading \Hello as \H applied to "ello".
 		j := i + 1
 		for j < n && isASCIILetter(s[j]) {
 			j++
 		}
 		name := s[i+1 : j]
+
+		// A single-letter accent control word (\H, \c, \v, \u) takes a
+		// base-letter argument, braced (\H{o}) or bare, optionally
+		// separated by whitespace (\H o).
+		if len(name) == 1 {
+			if mark, ok := letterAccentMarks[name[0]]; ok {
+				if newJ, composed, ok2 := tryAccentArgument(s, j, mark); ok2 {
+					return newJ, composed, ""
+				}
+			}
+		}
+
 		if lit, ok := literalMacros[name]; ok {
-			return j, lit, ""
+			// A TeX control word absorbs the whitespace that follows
+			// it, so "\ss e" means "ße", not "ß e".
+			k := j
+			for k < n && isASCIISpace(s[k]) {
+				k++
+			}
+			return k, lit, ""
 		}
 		return j, "", name
 	}
@@ -182,10 +202,38 @@ func decodeMacro(s string, i int) (newI int, repl string, unknown string) {
 	// Control symbols: backslash followed by exactly one non-letter
 	// character.
 	ch := s[i+1]
+	if mark, ok := symbolAccentMarks[ch]; ok {
+		if newJ, composed, ok2 := tryAccentArgument(s, i+2, mark); ok2 {
+			return newJ, composed, ""
+		}
+	}
 	if lit, ok := controlSymbols[ch]; ok {
 		return i + 2, lit, ""
 	}
 	return i + 2, "", string(ch)
+}
+
+// tryAccentArgument looks for an accent macro's base-letter argument
+// starting at s[pos]: an optional run of whitespace, then either a
+// braced letter ("{o}") or a bare letter ("o"). On success it returns
+// the index just past the argument and the base letter NFC-composed
+// with mark; ok is false if no valid argument was found, in which case
+// pos and composed are meaningless.
+func tryAccentArgument(s string, pos int, mark rune) (newPos int, composed string, ok bool) {
+	n := len(s)
+	for pos < n && isASCIISpace(s[pos]) {
+		pos++
+	}
+	if pos < n && s[pos] == '{' {
+		if pos+2 < n && isASCIILetter(s[pos+1]) && s[pos+2] == '}' {
+			return pos + 3, norm.NFC.String(string(s[pos+1]) + string(mark)), true
+		}
+		return 0, "", false
+	}
+	if pos < n && isASCIILetter(s[pos]) {
+		return pos + 1, norm.NFC.String(string(s[pos]) + string(mark)), true
+	}
+	return 0, "", false
 }
 
 // mnRemover strips unicode combining marks (category Mn) from a string.
