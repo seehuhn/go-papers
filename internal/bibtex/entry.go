@@ -73,7 +73,6 @@ func Format(key string, e Entry) string {
 	result += fmt.Sprintf("@%s{%s,\n", e.Type, key)
 
 	// Build list of fields to output in order
-	fieldOrder := make([]string, 0, len(e.Fields))
 	knownFieldsInOrder := make([]string, 0)
 	unknownFields := make([]string, 0)
 
@@ -112,7 +111,7 @@ func Format(key string, e Entry) string {
 	sort.Strings(unknownFields)
 
 	// Combine: known fields in order, then unknown fields alphabetically
-	fieldOrder = append(knownFieldsInOrder, unknownFields...)
+	fieldOrder := append(knownFieldsInOrder, unknownFields...)
 
 	// Output fields
 	for _, field := range fieldOrder {
