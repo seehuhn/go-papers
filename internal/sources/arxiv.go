@@ -83,9 +83,14 @@ type arxivFeedPrimClass struct {
 	Term string `xml:"term,attr"`
 }
 
-// arxivIDRe extracts the arXiv ID and version from the URL found in an
-// entry's <id> element, e.g. "http://arxiv.org/abs/2412.05039v2".
-var arxivIDRe = regexp.MustCompile(`([^/]+?)v(\d+)$`)
+// arxivIDRe extracts the arXiv ID and, when present, the version from the
+// URL found in an entry's <id> element, e.g.
+// "http://arxiv.org/abs/2412.05039v2" or the old-style
+// "http://arxiv.org/abs/math.PR/0605234v1". Matching starts right after
+// "/abs/" and is unrestricted in what it can consume, so (unlike a
+// [^/]-restricted pattern) it correctly keeps the category prefix and
+// slash used by pre-2007 IDs as part of the ID.
+var arxivIDRe = regexp.MustCompile(`/abs/(.+?)(?:v(\d+))?$`)
 
 // ByID fetches the record for one arXiv ID (with or without version
 // suffix). An unknown ID returns an error containing "not found".
@@ -130,6 +135,7 @@ func (a *Arxiv) ByID(id string) (*ArxivEntry, error) {
 	if len(feed.Entries) == 0 {
 		return nil, fmt.Errorf("arxiv: %s: not found", id)
 	}
+	// id_list carries exactly one ID, so the query returns at most one entry.
 	entry := feed.Entries[0]
 
 	arxivID, version := parseArxivID(entry.ID)
@@ -161,7 +167,10 @@ func (a *Arxiv) ByID(id string) (*ArxivEntry, error) {
 
 // parseArxivID extracts the arXiv ID (without version) and the version
 // number from the URL found in an entry's <id> element, e.g.
-// "http://arxiv.org/abs/2412.05039v2" -> ("2412.05039", 2).
+// "http://arxiv.org/abs/2412.05039v2" -> ("2412.05039", 2), or
+// "http://arxiv.org/abs/math.PR/0605234v1" -> ("math.PR/0605234", 1) for
+// old-style IDs with a category prefix. When there is no trailing version,
+// e.g. "http://arxiv.org/abs/2412.05039", the version is 0.
 func parseArxivID(idURL string) (string, int) {
 	m := arxivIDRe.FindStringSubmatch(idURL)
 	if m == nil {

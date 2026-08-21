@@ -43,6 +43,33 @@ const arxivFixture = `<?xml version="1.0" encoding="UTF-8"?>
 const arxivEmptyFixture = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom"></feed>`
 
+// arxivOldStyleFixture has an <id> with a category prefix, as used by
+// pre-2007 arXiv IDs, and a version suffix.
+const arxivOldStyleFixture = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/math.PR/0605234v1</id>
+    <title>An older paper</title>
+    <summary>An older abstract.</summary>
+    <published>2006-05-09T00:00:00Z</published>
+    <author><name>Jochen Voß</name></author>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="math.PR"/>
+  </entry>
+</feed>`
+
+// arxivNoVersionFixture has an <id> with no trailing version suffix.
+const arxivNoVersionFixture = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2412.05039</id>
+    <title>A study of SPDEs in Greenland</title>
+    <summary>We study stochastic partial differential equations.</summary>
+    <published>2024-12-06T14:00:00Z</published>
+    <author><name>Jochen Voß</name></author>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="math.PR"/>
+  </entry>
+</feed>`
+
 func newArxivTestServer(t *testing.T, body string) *Arxiv {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +99,28 @@ func TestArxivByID(t *testing.T) {
 	}
 	if e.DOI != "10.1234/example.doi" || e.Year != 2024 || e.PrimaryClass != "math.PR" {
 		t.Errorf("doi/year/class = %q/%d/%q", e.DOI, e.Year, e.PrimaryClass)
+	}
+}
+
+func TestArxivByIDOldStyle(t *testing.T) {
+	a := newArxivTestServer(t, arxivOldStyleFixture)
+	e, err := a.ByID("math.PR/0605234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.ID != "math.PR/0605234" || e.Version != 1 {
+		t.Errorf("id/version = %q/%d, want math.PR/0605234/1", e.ID, e.Version)
+	}
+}
+
+func TestArxivByIDNoVersion(t *testing.T) {
+	a := newArxivTestServer(t, arxivNoVersionFixture)
+	e, err := a.ByID("2412.05039")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.ID != "2412.05039" || e.Version != 0 {
+		t.Errorf("id/version = %q/%d, want 2412.05039/0", e.ID, e.Version)
 	}
 }
 
