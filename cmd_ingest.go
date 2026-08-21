@@ -95,7 +95,7 @@ func runIngest(args []string) error {
 		return fmt.Errorf("ingest: -doi and -arxiv say what one file is, but %d files were given", fs.NArg())
 	}
 
-	files, err := ingestFiles(fs.Args(), *since)
+	files, failures, err := ingestFiles(fs.Args(), *since)
 	if err != nil {
 		return fmt.Errorf("ingest: %w", err)
 	}
@@ -117,13 +117,13 @@ func runIngest(args []string) error {
 
 	switch {
 	case *into != "":
-		err = in.ingestInto(*into, files)
-	case len(files) == 0:
+		err = in.ingestInto(*into, files, failures)
+	case len(files) == 0 && len(failures) == 0:
 		// Every file was filtered out by -since, which ingestFiles has
 		// already reported. There is nothing left to do, and nothing failed.
 		return nil
 	default:
-		err = in.ingestBatch(files, *doiFlag, *arxivFlag)
+		err = in.ingestBatch(files, failures, *doiFlag, *arxivFlag)
 	}
 	if err != nil {
 		return fmt.Errorf("ingest: %w", err)
@@ -155,24 +155,37 @@ type ingestFile struct {
 // before the -since cutoff. A dropped file is reported on stdout: it is a
 // deliberate part of the run, not a failure. An empty since keeps every
 // file.
-func ingestFiles(paths []string, since string) ([]ingestFile, error) {
+//
+// A path that cannot be stat'ed (dangling symlink, permissions, an
+// unmaterialized cloud placeholder) or that names a directory is not an
+// abort: it comes back as a per-file failure, leaving the caller free to
+// carry on with everything else that did stat cleanly. The returned error
+// is reserved for a malformed -since argument, which is a usage mistake
+// rather than a property of any one file.
+func ingestFiles(paths []string, since string) ([]ingestFile, []ingestFailure, error) {
 	var cutoff time.Time
 	if since != "" {
 		var err error
 		cutoff, err = parseSince(since)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	files := make([]ingestFile, 0, len(paths))
+	var failures []ingestFailure
 	for _, path := range paths {
 		fi, err := os.Stat(path)
 		if err != nil {
-			return nil, err
+			failures = append(failures, ingestFailure{path: path, err: err})
+			continue
 		}
 		if fi.IsDir() {
-			return nil, fmt.Errorf("%s is a directory; ingest takes PDF files", path)
+			failures = append(failures, ingestFailure{
+				path: path,
+				err:  fmt.Errorf("%s is a directory; ingest takes PDF files", path),
+			})
+			continue
 		}
 		if since != "" && fi.ModTime().Before(cutoff) {
 			fmt.Printf("skipping %s: last modified %s, before %s\n",
@@ -181,7 +194,7 @@ func ingestFiles(paths []string, since string) ([]ingestFile, error) {
 		}
 		files = append(files, ingestFile{path: path, modTime: fi.ModTime()})
 	}
-	return files, nil
+	return files, failures, nil
 }
 
 // parseSince parses a -since timestamp in any of the accepted layouts. A
@@ -199,9 +212,14 @@ func parseSince(s string) (time.Time, error) {
 // ingestInto implements behavior branch 2: attach one file to an entry
 // that already exists, but only after checking that the file really is
 // that paper. A file which fails the check is left where it is.
-func (in *ingester) ingestInto(key string, files []ingestFile) error {
-	if len(files) != 1 {
-		return intoCountError(key, files)
+//
+// -into keeps the old all-or-nothing semantics: it needs exactly one
+// survivor, so a stat failure among the arguments blocks the run just as
+// a second surviving file would, rather than being ingested per-file the
+// way a batch run's failures are.
+func (in *ingester) ingestInto(key string, files []ingestFile, failures []ingestFailure) error {
+	if len(files) != 1 || len(failures) != 0 {
+		return intoCountError(key, files, failures)
 	}
 	f := files[0]
 
@@ -299,8 +317,20 @@ func pdfTitle(doc *pdfid.DocText, id pdfid.ID) string {
 // happened to the ones before it; the successes are reported on stdout as
 // they happen, and the failures are collected into one error at the end,
 // so that the command exits nonzero if any file was left behind.
-func (in *ingester) ingestBatch(files []ingestFile, doiOverride, arxivOverride string) error {
-	var failures []ingestFailure
+//
+// statFailures are paths ingestFiles could not even stat (or found to be
+// directories); they could never reach ingestOne, so they are logged and
+// folded into the closing error here rather than stopping the batch.
+func (in *ingester) ingestBatch(files []ingestFile, statFailures []ingestFailure, doiOverride, arxivOverride string) error {
+	failures := append([]ingestFailure(nil), statFailures...)
+	for _, f := range statFailures {
+		in.store.LogEvent(store.Event{
+			Command: "ingest",
+			Input:   "file",
+			Ref:     filepath.Base(f.path),
+			Outcome: eventOutcome(f.err),
+		})
+	}
 	for _, f := range files {
 		key, tier, err := in.ingestOne(f, doiOverride, arxivOverride)
 		in.store.LogEvent(store.Event{
@@ -319,7 +349,7 @@ func (in *ingester) ingestBatch(files []ingestFile, doiOverride, arxivOverride s
 	if len(failures) == 0 {
 		return nil
 	}
-	return batchError(len(files), failures)
+	return batchError(len(files)+len(statFailures), failures)
 }
 
 // ingestFailure is one file the batch could not ingest.
@@ -480,16 +510,21 @@ func duplicateError(what, key string) error {
 
 // intoCountError reports that -into did not get the single file it needs,
 // listing every survivor of the -since filter by name and modification
-// time so that the caller can pick one.
-func intoCountError(key string, files []ingestFile) error {
-	if len(files) == 0 {
+// time, and every path that could not even be stat'ed, so that the caller
+// can pick one.
+func intoCountError(key string, files []ingestFile, failures []ingestFailure) error {
+	total := len(files) + len(failures)
+	if total == 0 {
 		return fmt.Errorf("-into %s needs exactly one file, but -since filtered out every one of them", key)
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "-into %s needs exactly one file, but %d are left:\n", key, len(files))
+	fmt.Fprintf(&b, "-into %s needs exactly one file, but %d are left:\n", key, total)
 	for _, f := range files {
 		fmt.Fprintf(&b, "  %s (last modified %s)\n", f.path, f.modTime.Format(time.RFC3339))
+	}
+	for _, f := range failures {
+		fmt.Fprintf(&b, "  %s: %v\n", f.path, f.err)
 	}
 	b.WriteString("Re-run with only the file that belongs to " + key +
 		", or narrow -since until one file is left.")

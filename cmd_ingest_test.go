@@ -284,6 +284,35 @@ func TestIngestBatchPartialFailure(t *testing.T) {
 	}
 }
 
+// TestIngestBatchSurvivesStatFailure pins that a path which cannot even be
+// stat'ed (dangling symlink, permissions, an unmaterialized cloud
+// placeholder) is a per-file failure, not a reason to abort the batch.
+func TestIngestBatchSurvivesStatFailure(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefWorkResponse)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+
+	good := filepath.Join(t.TempDir(), "good.pdf")
+	makeIngestPDF(t, good, "Probability inequalities", "10.1080/01621459.1963.10500830")
+	missing := filepath.Join(t.TempDir(), "does-not-exist.pdf")
+
+	out := captureStdout(t, func() {
+		err := runIngest([]string{missing, good})
+		if err == nil || !strings.Contains(err.Error(), "does-not-exist.pdf") {
+			t.Errorf("error must name the bad path, got %v", err)
+		}
+	})
+	if !strings.Contains(out, "ingested") {
+		t.Errorf("the good file must still be ingested, stdout:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
+		t.Error("good file should be in the store despite the bad sibling")
+	}
+}
+
 // TestIngestBatchArxiv covers the other half of behavior branch 3: a file
 // carrying an arXiv stamp is resolved through the arXiv API and attached
 // under its version-qualified name, without any download.
