@@ -202,20 +202,42 @@ func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 }
 
 // encodeCrossrefAuthors builds a bibtex author field from Crossref author
-// records, tex.Encoding each name.
+// records, tex.Encoding each name. Crossref author arrays can contain
+// collective/organization entries (e.g. {"name": "LIGO Scientific
+// Collaboration"}) that carry a literal Name with Family and Given both
+// absent; these render as a braced bibtex literal name, which
+// bibtex.ParseNames treats as a single opaque token (Tame-the-BeaST
+// rules), so the collaboration name is never split into first/von/last
+// parts. An entry with Name/Family/Given all empty is skipped rather than
+// rejected - Crossref data occasionally has these - unless every entry in
+// the list is empty, in which case the usual "no authors" error applies.
 func encodeCrossrefAuthors(authors []sources.CrossrefAuthor) (string, error) {
 	if len(authors) == 0 {
 		return "", fmt.Errorf("no authors")
 	}
-	parts := make([]string, len(authors))
-	for i, a := range authors {
-		family := tex.Encode(a.Family)
-		given := tex.Encode(a.Given)
-		if given == "" {
-			parts[i] = family
-		} else {
-			parts[i] = family + ", " + given
+	var parts []string
+	for _, a := range authors {
+		switch {
+		case a.Family == "" && a.Given == "" && a.Name == "":
+			// No usable data at all: skip this entry.
+			continue
+		case a.Family == "" && a.Name != "":
+			// Organization/collective author: a literal name, braced so
+			// bibtex.ParseNames keeps it as one token instead of
+			// splitting on internal whitespace.
+			parts = append(parts, "{"+tex.Encode(a.Name)+"}")
+		default:
+			family := tex.Encode(a.Family)
+			given := tex.Encode(a.Given)
+			if given == "" {
+				parts = append(parts, family)
+			} else {
+				parts = append(parts, family+", "+given)
+			}
 		}
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("no authors")
 	}
 	return strings.Join(parts, " and "), nil
 }

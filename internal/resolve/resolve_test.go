@@ -19,7 +19,9 @@ package resolve
 import (
 	"testing"
 
+	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/sources"
+	"seehuhn.de/go/paper/internal/store"
 )
 
 func hoeffdingWork() *sources.CrossrefWork {
@@ -90,6 +92,78 @@ func TestFromCrossrefEncodesJournal(t *testing.T) {
 	}
 	if got := p.Bibtex.Fields["journal"]; got != `Statistics \& Probability Letters` {
 		t.Errorf("journal = %q", got)
+	}
+}
+
+// TestFromCrossrefOrgAuthor pins the fix for the pile-ingest bug found on
+// the LIGO gravitational-wave discovery paper
+// (10.1103/PhysRevLett.116.061102): Crossref author arrays can contain a
+// collective-author entry that carries only a literal "name", with no
+// family/given fields. Such an entry must render as a bibtex literal name
+// ("{...}"), not as an empty name part.
+func TestFromCrossrefOrgAuthor(t *testing.T) {
+	w := hoeffdingWork()
+	w.Authors = []sources.CrossrefAuthor{
+		{Family: "Abbott", Given: "B. P."},
+		{Name: "LIGO Scientific Collaboration"},
+	}
+	p, err := FromCrossref(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `Abbott, B. P. and {LIGO Scientific Collaboration}`
+	if got := p.Bibtex.Fields["author"]; got != want {
+		t.Errorf("author = %q, want %q", got, want)
+	}
+
+	// End-to-end sanity: the braced literal name must parse as a single,
+	// non-empty name under Tame-the-BeaST rules, and store.CheckPaper must
+	// not flag the author field.
+	names, err := bibtex.ParseNames(p.Bibtex.Fields["author"])
+	if err != nil {
+		t.Fatalf("ParseNames(%q): %v", p.Bibtex.Fields["author"], err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("ParseNames returned %d names, want 2: %+v", len(names), names)
+	}
+	if names[1].Last != "{LIGO Scientific Collaboration}" || names[1].First != "" {
+		t.Errorf("names[1] = %+v", names[1])
+	}
+	for _, prob := range store.CheckPaper(p) {
+		if prob.Severity == "error" {
+			t.Errorf("CheckPaper reported an error: %s: %s", prob.Severity, prob.Msg)
+		}
+	}
+}
+
+// TestFromCrossrefSkipsEmptyAuthor pins that an author entry with all of
+// Name/Family/Given empty is skipped rather than rejected, as long as at
+// least one other entry has real content.
+func TestFromCrossrefSkipsEmptyAuthor(t *testing.T) {
+	w := hoeffdingWork()
+	w.Authors = []sources.CrossrefAuthor{
+		{Family: "Abbott", Given: "B. P."},
+		{},
+		{Name: "LIGO Scientific Collaboration"},
+	}
+	p, err := FromCrossref(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `Abbott, B. P. and {LIGO Scientific Collaboration}`
+	if got := p.Bibtex.Fields["author"]; got != want {
+		t.Errorf("author = %q, want %q", got, want)
+	}
+}
+
+// TestFromCrossrefAllAuthorsEmpty pins that the existing "no authors"
+// error still applies when every author entry is empty.
+func TestFromCrossrefAllAuthorsEmpty(t *testing.T) {
+	w := hoeffdingWork()
+	w.Authors = []sources.CrossrefAuthor{{}, {}}
+	_, err := FromCrossref(w)
+	if err == nil {
+		t.Fatal("want an error when every author entry is empty")
 	}
 }
 

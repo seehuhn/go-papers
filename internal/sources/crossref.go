@@ -23,10 +23,14 @@ import (
 	"strconv"
 )
 
-// CrossrefAuthor is one author entry in a Crossref work record.
+// CrossrefAuthor is one author entry in a Crossref work record. Most
+// entries carry Family/Given; corporate or collective authors (e.g. "LIGO
+// Scientific Collaboration") instead carry a literal Name with Family and
+// Given both absent.
 type CrossrefAuthor struct {
 	Family string `json:"family"`
 	Given  string `json:"given"`
+	Name   string `json:"name"`
 }
 
 // CrossrefDate is a Crossref date field, given as a list of date parts

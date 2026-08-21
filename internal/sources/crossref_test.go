@@ -86,6 +86,43 @@ func TestCrossrefWork(t *testing.T) {
 	}
 }
 
+// crossrefOrgAuthorFixture is a mixed author array, as seen on the LIGO
+// gravitational-wave discovery paper (10.1103/PhysRevLett.116.061102):
+// ordinary {family,given} entries alongside a collective-author entry
+// that carries only a literal "name".
+const crossrefOrgAuthorFixture = `{"status":"ok","message-type":"work","message":{
+  "DOI":"10.1103/PhysRevLett.116.061102","type":"journal-article",
+  "title":["Observation of Gravitational Waves"],
+  "container-title":["Physical Review Letters"],
+  "author":[{"given":"B. P.","family":"Abbott"},
+            {"name":"LIGO Scientific Collaboration"}],
+  "volume":"116","issue":"6","page":"061102",
+  "published":{"date-parts":[[2016,2]]}}}`
+
+func TestCrossrefWorkOrgAuthor(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/works/", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefOrgAuthorFixture)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := &Crossref{BaseURL: srv.URL, Client: srv.Client()}
+
+	w, err := c.Work("10.1103/PhysRevLett.116.061102")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.Authors) != 2 {
+		t.Fatalf("authors = %+v, want 2 entries", w.Authors)
+	}
+	if w.Authors[0].Family != "Abbott" || w.Authors[0].Given != "B. P." || w.Authors[0].Name != "" {
+		t.Errorf("author[0] = %+v", w.Authors[0])
+	}
+	if w.Authors[1].Name != "LIGO Scientific Collaboration" || w.Authors[1].Family != "" || w.Authors[1].Given != "" {
+		t.Errorf("author[1] = %+v", w.Authors[1])
+	}
+}
+
 func TestCrossrefWorkNotFound(t *testing.T) {
 	c, _ := newCrossrefTestServer(t)
 	_, err := c.Work("10.9999/nonexistent")
