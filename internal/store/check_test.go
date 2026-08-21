@@ -248,3 +248,26 @@ func TestCheckEprintInconsistent(t *testing.T) {
 		t.Error("missing eprint-inconsistency problem")
 	}
 }
+
+func TestCheckRawSpecialChar(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["journal"] = "Statistics & Probability Letters"
+	ps := CheckPaper(p)
+	if !problemsContain(ps, `bibtex.fields.journal: raw "&"`) {
+		t.Errorf("missing raw-ampersand problem, got %v", ps)
+	}
+	for _, prob := range ps {
+		if strings.Contains(prob.Msg, `raw "&"`) && prob.Severity != "warning" {
+			t.Errorf("severity = %q, want warning", prob.Severity)
+		}
+	}
+}
+
+func TestCheckEscapedSpecialCharOK(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["journal"] = `Statistics \& Probability Letters`
+	p.Bibtex.Fields["note"] = `$100\%$ and $a & b$ in math mode`
+	if ps := CheckPaper(p); problemsContain(ps, "raw") {
+		t.Errorf("escaped and math-mode specials must pass, got %v", ps)
+	}
+}

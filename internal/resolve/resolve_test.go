@@ -78,6 +78,21 @@ func TestFromCrossrefEncodesAuthors(t *testing.T) {
 	}
 }
 
+// TestFromCrossrefEncodesJournal pins that the journal field goes through
+// tex.Encode like every other free-text field: a journal name containing
+// a TeX special character must arrive bibtex-escaped, not raw.
+func TestFromCrossrefEncodesJournal(t *testing.T) {
+	w := hoeffdingWork()
+	w.ContainerTitle = []string{"Statistics & Probability Letters"}
+	p, err := FromCrossref(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Bibtex.Fields["journal"]; got != `Statistics \& Probability Letters` {
+		t.Errorf("journal = %q", got)
+	}
+}
+
 func arxivEntry() *sources.ArxivEntry {
 	return &sources.ArxivEntry{
 		ID: "2412.05039", Version: 2,

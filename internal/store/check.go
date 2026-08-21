@@ -80,6 +80,7 @@ func CheckPaper(p *Paper) []Problem {
 	problems = append(problems, checkRequiredFields(p)...)
 	problems = append(problems, checkNames(p)...)
 	problems = append(problems, checkFieldEncoding(p)...)
+	problems = append(problems, checkRawSpecials(p)...)
 	problems = append(problems, checkDOI(p)...)
 	problems = append(problems, checkArxiv(p)...)
 	problems = append(problems, checkStatusHoldings(p)...)
@@ -178,6 +179,53 @@ func checkFieldEncoding(p *Paper) []Problem {
 		}
 	}
 	return problems
+}
+
+// Rule 5a: a field containing a raw, unescaped "&" or "%". Both are TeX
+// syntax rather than text — "&" is an alignment tab, "%" starts a
+// comment — so a field carrying one verbatim typesets wrongly or
+// swallows the rest of the line. This is a backstop for metadata that
+// did not come through tex.Encode (hand edits, older entries), hence a
+// warning: the entry is readable, but the bibtex it generates is not
+// what the author meant.
+func checkRawSpecials(p *Paper) []Problem {
+	var problems []Problem
+	for _, field := range sortedFieldNames(p) {
+		value := p.Bibtex.Fields[field]
+		for _, ch := range rawSpecials(value) {
+			problems = append(problems, Problem{p.Key, "warning", fmt.Sprintf(
+				`bibtex.fields.%s: raw %q in %q should be escaped as \%s`,
+				field, ch, value, ch)})
+		}
+	}
+	return problems
+}
+
+// rawSpecials returns, in order of first appearance and without
+// repetition, the special characters ("&", "%") that appear in s
+// unescaped and outside math mode. A backslash escapes the character
+// following it, and a matched pair of "$" delimits math mode, whose
+// content is skipped exactly as tex.Decode skips it; an unmatched "$" is
+// an ordinary character.
+func rawSpecials(s string) []string {
+	var found []string
+	seen := make(map[byte]bool)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++ // whatever follows the backslash is escaped
+		case '$':
+			if j := strings.IndexByte(s[i+1:], '$'); j >= 0 {
+				i += j + 1
+			}
+		case '&', '%':
+			if !seen[s[i]] {
+				seen[s[i]] = true
+				found = append(found, string(s[i]))
+			}
+		}
+	}
+	return found
 }
 
 // bracesBalanced reports whether s has properly nested and matched

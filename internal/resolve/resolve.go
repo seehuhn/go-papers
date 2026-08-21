@@ -94,7 +94,7 @@ func FromCrossref(w *sources.CrossrefWork) (*store.Paper, error) {
 		"year":   yearStr,
 	}
 	if len(w.ContainerTitle) > 0 && w.ContainerTitle[0] != "" {
-		fields["journal"] = w.ContainerTitle[0]
+		fields["journal"] = tex.Encode(w.ContainerTitle[0])
 	}
 	if w.Volume != "" {
 		fields["volume"] = w.Volume

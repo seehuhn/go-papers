@@ -35,6 +35,9 @@ func TestEncode(t *testing.T) {
 		{"Kołmogorov 数学", `Ko{\l}mogorov 数学`},        // unencodable passes through
 		{"ế", "ế"},                                   // stacked marks: passthrough, no corruption
 		{"Håkon Åström", `H{\aa}kon {\AA}str{\"o}m`}, // å/Å via NFD-decomposed ring above
+		{"Statistics & Probability Letters", `Statistics \& Probability Letters`}, // ampersand
+		{"100% of x_1", `100\% of x\_1`},                                          // percent and underscore
+		{"C#, #tags & more", `C\#, \#tags \& more`},                               // hash
 	}
 	for _, c := range cases {
 		if got := Encode(c.in); got != c.want {
@@ -45,7 +48,8 @@ func TestEncode(t *testing.T) {
 
 func TestEncodeDecodeAgree(t *testing.T) {
 	// Whatever Encode produces must Decode back to the original text.
-	for _, s := range []string{"Voß", "Erdős", "Schrödinger", "Lévy", "Čech", "Łukasiewicz", "Håkon"} {
+	for _, s := range []string{"Voß", "Erdős", "Schrödinger", "Lévy", "Čech", "Łukasiewicz", "Håkon",
+		"Statistics & Probability Letters", "100% of x_1", "C# & F#"} {
 		enc := Encode(s)
 		dec, unknown := Decode(enc)
 		if len(unknown) > 0 {

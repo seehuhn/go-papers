@@ -66,12 +66,25 @@ var encodeLiteral = func() map[rune]string {
 	return m
 }()
 
+// texSpecials are the characters that LaTeX reads as syntax rather than
+// text and that Encode therefore escapes with a backslash. Decode's
+// controlSymbols table maps each of them back, so the round trip holds.
+// The remaining specials are left alone: braces and $ are the encoding's
+// own grouping and math delimiters, ~ and ^ arise from accent macros, and
+// a backslash in the input is already meaningful to the caller.
+var texSpecials = map[rune]bool{
+	'&': true,
+	'%': true,
+	'#': true,
+	'_': true,
+}
+
 // Encode converts plain unicode text to bibtex-encoded LaTeX: accented
 // letters become accent macros in braces ({\"o}, {\H{o}}), special
-// letters become their macros ({\ss}, {\o}), and en/em dashes become --
-// and ---. Characters with no LaTeX spelling (CJK, math symbols, ...)
-// pass through unchanged; paper check's encoding rules remain the
-// backstop for those.
+// letters become their macros ({\ss}, {\o}), en/em dashes become -- and
+// ---, and the TeX special characters & % # _ are escaped. Characters
+// with no LaTeX spelling (CJK, math symbols, ...) pass through unchanged;
+// paper check's encoding rules remain the backstop for those.
 //
 // Encode is one-way: for text it fully handles, Decode(Encode(s)) == s,
 // but Decode is lossy in general and is not required to be the exact
@@ -89,6 +102,11 @@ func Encode(s string) string {
 			continue
 		case '—': // em dash
 			out = append(out, '-', '-', '-')
+			i++
+			continue
+		}
+		if texSpecials[src[i]] {
+			out = append(out, '\\', src[i])
 			i++
 			continue
 		}
