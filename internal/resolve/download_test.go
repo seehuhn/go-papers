@@ -143,3 +143,46 @@ func TestFetchSourceRejectsTraversal(t *testing.T) {
 		t.Error("file escaped the destination directory")
 	}
 }
+
+func TestFetchFileRejectsOversizedBody(t *testing.T) {
+	saved := maxDownloadSize
+	maxDownloadSize = 1024
+	t.Cleanup(func() { maxDownloadSize = saved })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("%PDF-1.4\n"))
+		w.Write(bytes.Repeat([]byte("x"), 4096))
+	}))
+	t.Cleanup(srv.Close)
+	dest := filepath.Join(t.TempDir(), "out.pdf")
+	err := FetchFile(srv.Client(), srv.URL, dest, "")
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Errorf("oversized body must error mentioning the size cap, got %v", err)
+	}
+	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("no file may be stored when the cap is exceeded")
+	}
+}
+
+func TestFetchSourceRejectsOversizedBody(t *testing.T) {
+	saved := maxDownloadSize
+	maxDownloadSize = 1024
+	t.Cleanup(func() { maxDownloadSize = saved })
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	gw.Write(bytes.Repeat([]byte("a"), 4096)) // decompresses over the cap
+	gw.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(buf.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+	dir := filepath.Join(t.TempDir(), "src")
+	err := FetchSource(srv.Client(), srv.URL, dir, "")
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Errorf("oversized decompressed source must error, got %v", err)
+	}
+	if _, statErr := os.Stat(dir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("destDir must not remain when the cap is exceeded")
+	}
+}

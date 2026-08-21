@@ -36,7 +36,7 @@ import (
 // arXiv e-prints and published PDFs are ordinarily well under this, but
 // a small handful of PDFs (e.g. with embedded supplementary data) can
 // run to tens of MB, so the ceiling is generous.
-const maxDownloadSize = 100 << 20 // 100 MB
+var maxDownloadSize int64 = 100 << 20 // 100 MB
 
 // pdfMagic is the byte sequence that starts every valid PDF file.
 const pdfMagic = "%PDF-"
@@ -79,7 +79,7 @@ func FetchFile(client *http.Client, url, destPath, email string) error {
 		return fmt.Errorf("unexpected status %s for %s", resp.Status, url)
 	}
 
-	limited := io.LimitReader(resp.Body, maxDownloadSize)
+	limited := io.LimitReader(resp.Body, maxDownloadSize+1)
 	var header [len(pdfMagic)]byte
 	n, err := io.ReadFull(limited, header[:])
 	if err != nil && err != io.ErrUnexpectedEOF {
@@ -100,11 +100,18 @@ func FetchFile(client *http.Client, url, destPath, email string) error {
 		return err
 	}
 
+	written := int64(n)
 	_, werr := f.Write(header[:n])
 	if werr == nil {
-		_, werr = io.Copy(f, limited)
+		var copied int64
+		copied, werr = io.Copy(f, limited)
+		written += copied
 	}
 	cerr := f.Close()
+	if written > maxDownloadSize {
+		os.Remove(tmpPath)
+		return fmt.Errorf("response from %s is too large (over %d bytes)", url, maxDownloadSize)
+	}
 	if werr != nil || cerr != nil {
 		os.Remove(tmpPath)
 		if werr != nil {
@@ -140,9 +147,12 @@ func FetchSource(client *http.Client, url, destDir, email string) error {
 		return fmt.Errorf("unexpected status %s for %s", resp.Status, url)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize+1))
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", url, err)
+	}
+	if int64(len(body)) > maxDownloadSize {
+		return fmt.Errorf("response from %s is too large (over %d bytes)", url, maxDownloadSize)
 	}
 
 	if strings.HasPrefix(string(body), pdfMagic) {
@@ -160,9 +170,13 @@ func FetchSource(client *http.Client, url, destDir, email string) error {
 	if err != nil {
 		return fmt.Errorf("decompressing %s: %w", url, err)
 	}
-	decompressed, err := io.ReadAll(io.LimitReader(gz, maxDownloadSize))
+	decompressed, err := io.ReadAll(io.LimitReader(gz, maxDownloadSize+1))
 	if err != nil {
 		return fmt.Errorf("decompressing %s: %w", url, err)
+	}
+	if int64(len(decompressed)) > maxDownloadSize {
+		os.RemoveAll(destDir)
+		return fmt.Errorf("response from %s is too large (over %d bytes)", url, maxDownloadSize)
 	}
 
 	tr := tar.NewReader(bytes.NewReader(decompressed))
