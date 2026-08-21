@@ -328,3 +328,54 @@ func TestIngestBatchArxiv(t *testing.T) {
 		t.Error("source file must be moved away")
 	}
 }
+
+// TestIngestIntoPreprintDiscoversArxiv pins the preprint-as-published
+// invariant: an entry recorded from its published metadata (a DOI and a
+// title, no arXiv ref) can still be handed a preprint PDF. Verification
+// succeeds by title here — the file carries no DOI, and the entry has no
+// arXiv ID to match against — but the file is an arXiv e-print, so it
+// must be stored under its version-qualified arXiv name and the entry
+// must record the arXiv identity the file disclosed. Filing it as
+// published.pdf would claim a version of record the store does not hold.
+func TestIngestIntoPreprintDiscoversArxiv(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	guardBases(t)
+	s, _ := store.Open("")
+	s.Save(&store.Paper{Key: "voss_2024", Status: "clean", Holdings: "none",
+		DOI: "10.1000/spde-greenland",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Voss, Jochen",
+			"title":   "A study of SPDEs in Greenland",
+			"journal": "J. Fake Stud.", "year": "2024"}}})
+
+	f := filepath.Join(t.TempDir(), "preprint.pdf")
+	pdfidtest.MakePDF(t, f, "A study of SPDEs in Greenland", "Jochen Voss", []string{
+		"A study of SPDEs in Greenland",
+		"arXiv:2412.05039v2 [math.PR] 6 Dec 2024",
+	}, []float64{24, 10})
+
+	if err := runIngest([]string{"-into", "voss_2024", f}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(storeDir, "voss_2024", "arxiv-2412.05039v2.pdf")); err != nil {
+		t.Error("the preprint must be stored under its version-qualified arXiv name")
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "voss_2024", "published.pdf")); err == nil {
+		t.Error("a preprint must never be filed as the version of record")
+	}
+	if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
+		t.Error("attached file must be moved, not copied")
+	}
+
+	p, err := s.Load("voss_2024")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Holdings != "preprint" {
+		t.Errorf("holdings = %q, want preprint", p.Holdings)
+	}
+	if p.Arxiv == nil || p.Arxiv.ID != "2412.05039" || p.Arxiv.Version != 2 {
+		t.Errorf("arxiv = %+v, want the identity the file disclosed", p.Arxiv)
+	}
+}

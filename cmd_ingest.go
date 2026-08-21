@@ -244,24 +244,41 @@ func (in *ingester) ingestIntoOne(key string, f ingestFile) (int, error) {
 // verifyInto checks a file against the entry it is to be attached to and,
 // when they agree, returns the name to store it under. The file passes if
 // it carries the entry's arXiv ID, or the entry's DOI, or a title close
-// enough to the entry's. Only an arXiv match changes the file name: a
-// preprint is stored under its version-qualified arXiv name, everything
-// else as the published PDF.
+// enough to the entry's.
+//
+// The name follows what the file is, not the route by which it was
+// verified: any file carrying an arXiv stamp is a preprint and is stored
+// under its version-qualified arXiv name, so that RecomputeHoldings reads
+// it as one. Filing such a file as published.pdf — which a title match
+// against a published entry used to do — would claim a version of record
+// the store does not hold.
+//
+// An arXiv identity the entry does not yet record is written onto p here,
+// so that the attach which follows saves it to paper.json: the file is
+// the only evidence there is, and losing it would leave holdings and
+// metadata disagreeing.
 func verifyInto(p *store.Paper, doc *pdfid.DocText, id pdfid.ID) (string, bool) {
-	if id.ArxivID != "" && p.Arxiv != nil && id.ArxivID == p.Arxiv.ID {
-		version := id.Version
-		if version <= 0 {
-			version = p.Arxiv.Version
-		}
-		return arxivFileBase(id.ArxivID, version) + ".pdf", true
+	sameArxiv := id.ArxivID != "" && p.Arxiv != nil && id.ArxivID == p.Arxiv.ID
+	sameDOI := id.DOI != "" && p.DOI != "" && strings.EqualFold(id.DOI, p.DOI)
+	sameTitle := match.TitleSimilarity(p.Bibtex.Fields["title"], pdfTitle(doc, id)) >= ingestTitleMinScore
+	if !sameArxiv && !sameDOI && !sameTitle {
+		return "", false
 	}
-	if id.DOI != "" && p.DOI != "" && strings.EqualFold(id.DOI, p.DOI) {
+
+	if id.ArxivID == "" {
 		return "published.pdf", true
 	}
-	if match.TitleSimilarity(p.Bibtex.Fields["title"], pdfTitle(doc, id)) >= ingestTitleMinScore {
-		return "published.pdf", true
+
+	version := id.Version
+	switch {
+	case p.Arxiv == nil:
+		p.Arxiv = &store.ArxivRef{ID: id.ArxivID, Version: id.Version}
+	case sameArxiv && version <= 0:
+		// The file names the e-print but not which version of it; the
+		// entry already knows.
+		version = p.Arxiv.Version
 	}
-	return "", false
+	return arxivFileBase(id.ArxivID, version) + ".pdf", true
 }
 
 // pdfTitle is the best title the identification found for a file: the
