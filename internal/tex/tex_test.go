@@ -80,3 +80,9 @@ func TestFold(t *testing.T) {
 		}
 	}
 }
+
+func TestFoldTieMatchesSpace(t *testing.T) {
+	if got := Fold(`van~Kampen`); got != "van kampen" {
+		t.Errorf("Fold(van~Kampen) = %q, want %q", got, "van kampen")
+	}
+}

@@ -36,26 +36,28 @@ func init() {
 // sorted by key, with blank lines between entries. Unknown keys produce
 // an error suggesting "paper search".
 func runBib(args []string) error {
-	fs := flag.NewFlagSet("bib", flag.ContinueOnError)
-	storeFlag := fs.String("store", "", "path to the paper store (overrides PAPER_STORE)")
+	fs, storeFlag := newFlagSet("bib")
 	allFlag := fs.Bool("all", false, "export all papers in the store")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("paper bib: parsing arguments: %w", err)
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return fmt.Errorf("bib: parsing arguments: %w", err)
 	}
 
 	keys := fs.Args()
 
 	// Check for conflicting or missing arguments
 	if *allFlag && len(keys) > 0 {
-		return fmt.Errorf("paper bib: cannot use -all with explicit keys; use one or the other")
+		return fmt.Errorf("bib: cannot use -all with explicit keys; use one or the other")
 	}
 	if !*allFlag && len(keys) == 0 {
-		return fmt.Errorf("paper bib: specify one or more keys, or use -all to export all papers")
+		return fmt.Errorf("bib: specify one or more keys, or use -all to export all papers")
 	}
 
 	s, err := store.Open(*storeFlag)
 	if err != nil {
-		return fmt.Errorf("paper bib: %w", err)
+		return fmt.Errorf("bib: %w", err)
 	}
 
 	var papers []*store.Paper
@@ -64,7 +66,7 @@ func runBib(args []string) error {
 		// Load all papers
 		papers, err = s.LoadAll()
 		if err != nil {
-			return fmt.Errorf("paper bib: %w", err)
+			return fmt.Errorf("bib: %w", err)
 		}
 	} else {
 		// Deduplicate keys while preserving order
@@ -85,10 +87,10 @@ func runBib(args []string) error {
 				// Check if this is a "not found" error (entry directory or paper.json doesn't exist)
 				// vs. an actual load/parse error (corrupted JSON, permissions, etc.)
 				if errors.Is(err, os.ErrNotExist) {
-					return fmt.Errorf("paper bib: paper %q not found; try 'paper search %s'", key, key)
+					return fmt.Errorf("bib: paper %q not found; try 'paper search %s'", key, key)
 				}
 				// For other errors, report the underlying issue
-				return fmt.Errorf("paper bib: cannot load paper %q: %w", key, err)
+				return fmt.Errorf("bib: cannot load paper %q: %w", key, err)
 			}
 			papers = append(papers, p)
 		}

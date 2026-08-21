@@ -14,11 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Package bibtex parses bibtex "author"/"editor" fields into structured
-// names. It is a Go port of the `parse` function from the Python
-// `s6py.bibtex.author` module, which in turn implements the name-parsing
-// algorithm described in "Tame the BeaST, The B to X of BibTeX" by
-// Nicholas Markey.
+// Package bibtex represents and parses BibTeX bibliography entries. Entry
+// holds a bibtex entry's type and fields (see entry.go); ParseNames parses
+// bibtex "author"/"editor" fields into structured Name values. ParseNames
+// is a Go port of the `parse` function from the Python `s6py.bibtex.author`
+// module, which in turn implements the name-parsing algorithm described in
+// "Tame the BeaST, The B to X of BibTeX" by Nicholas Markey.
 package bibtex
 
 import (

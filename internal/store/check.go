@@ -57,6 +57,18 @@ var pageRangeSingleDash = regexp.MustCompile(`\d-\d`)
 var validStatuses = map[string]bool{"draft": true, "clean": true}
 var validHoldings = map[string]bool{"none": true, "preprint": true, "published": true, "both": true}
 
+// ValidStatus reports whether s is a legal value for Paper.Status
+// ("draft" or "clean").
+func ValidStatus(s string) bool {
+	return validStatuses[s]
+}
+
+// ValidHoldings reports whether s is a legal value for Paper.Holdings
+// ("none", "preprint", "published", or "both").
+func ValidHoldings(s string) bool {
+	return validHoldings[s]
+}
+
 // CheckPaper runs all offline, per-entry validation rules against p and
 // returns every problem found. A nil or empty result means p is clean.
 // CheckPaper never touches the network or the filesystem; it only

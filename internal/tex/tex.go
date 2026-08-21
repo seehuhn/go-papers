@@ -246,6 +246,7 @@ var foldReplacer = strings.NewReplacer(
 	"æ", "ae",
 	"ø", "o",
 	"ł", "l",
+	string(noBreakSpace), " ",
 )
 
 // Fold decodes s (see Decode) and then reduces it to a normalized,

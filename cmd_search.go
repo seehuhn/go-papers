@@ -19,6 +19,7 @@ package main
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -45,28 +46,36 @@ const maxHitLineRunes = 100
 // narrowed by -holdings/-status, and prints the results either as plain
 // text (one line per hit) or, with -json, as a JSON array.
 func runSearch(args []string) error {
-	fs := flag.NewFlagSet("search", flag.ContinueOnError)
-	storeFlag := fs.String("store", "", "path to the paper store (overrides PAPER_STORE)")
+	fs, storeFlag := newFlagSet("search")
 	jsonFlag := fs.Bool("json", false, "print results as a JSON array")
 	holdingsFlag := fs.String("holdings", "", "only include papers with this holdings value")
 	statusFlag := fs.String("status", "", "only include papers with this status")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("paper search: parsing arguments: %w", err)
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return fmt.Errorf("search: parsing arguments: %w", err)
 	}
 
 	terms := fs.Args()
 	if len(terms) == 0 && *holdingsFlag == "" && *statusFlag == "" {
-		return fmt.Errorf("paper search: no search terms given; supply one or more terms, or a -holdings/-status filter")
+		return fmt.Errorf("search: no search terms given; supply one or more terms, or a -holdings/-status filter")
+	}
+	if *holdingsFlag != "" && !store.ValidHoldings(*holdingsFlag) {
+		return fmt.Errorf("search: invalid -holdings %q; want one of none, preprint, published, both", *holdingsFlag)
+	}
+	if *statusFlag != "" && !store.ValidStatus(*statusFlag) {
+		return fmt.Errorf("search: invalid -status %q; want one of draft, clean", *statusFlag)
 	}
 
 	s, err := store.Open(*storeFlag)
 	if err != nil {
-		return fmt.Errorf("paper search: %w", err)
+		return fmt.Errorf("search: %w", err)
 	}
 
 	hits, err := s.Search(terms)
 	if err != nil {
-		return fmt.Errorf("paper search: %w", err)
+		return fmt.Errorf("search: %w", err)
 	}
 
 	filtered := make([]store.Hit, 0, len(hits))
@@ -123,7 +132,7 @@ func printSearchJSON(hits []store.Hit) error {
 
 	data, err := json.Marshal(results, jsontext.WithIndent("  "))
 	if err != nil {
-		return fmt.Errorf("paper search: encoding JSON: %w", err)
+		return fmt.Errorf("search: encoding JSON: %w", err)
 	}
 	os.Stdout.Write(data)
 	fmt.Println()

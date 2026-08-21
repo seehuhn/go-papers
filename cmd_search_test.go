@@ -108,6 +108,19 @@ func TestSearchHumanFlagsDraftAndDeprecated(t *testing.T) {
 	}
 }
 
+func TestSearchRejectsInvalidFilter(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PAPER_STORE", dir)
+	err := runSearch([]string{"-holdings", "zzz", "test"})
+	if err == nil || !strings.Contains(err.Error(), "none, preprint, published, both") {
+		t.Errorf("invalid -holdings should error naming valid values, got %v", err)
+	}
+	err = runSearch([]string{"-status", "zzz", "test"})
+	if err == nil || !strings.Contains(err.Error(), "draft, clean") {
+		t.Errorf("invalid -status should error naming valid values, got %v", err)
+	}
+}
+
 func TestSearchNoTermsWithFilterReturnsAll(t *testing.T) {
 	s, _ := fixtureStore(t)
 	saveSearchFixture(t, s)

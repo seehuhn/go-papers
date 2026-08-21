@@ -16,7 +16,10 @@
 
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDispatchUnknown(t *testing.T) {
 	err := dispatch([]string{"no-such-command"})
@@ -34,5 +37,33 @@ func TestDispatchHelp(t *testing.T) {
 func TestDispatchEmpty(t *testing.T) {
 	if err := dispatch(nil); err != nil {
 		t.Fatalf("dispatch with nil args failed: %v", err)
+	}
+}
+
+func TestHelpFlagExitsZero(t *testing.T) {
+	// dispatch returns flag.ErrHelp-derived nil for -h at the command level
+	err := dispatch([]string{"bib", "-h"})
+	if err != nil {
+		t.Errorf("bib -h: got error %v, want nil", err)
+	}
+	// top-level -h / -help / --help behave like "paper help"
+	for _, arg := range []string{"-h", "-help", "--help"} {
+		if err := dispatch([]string{arg}); err != nil {
+			t.Errorf("paper %s: got error %v, want nil", arg, err)
+		}
+	}
+}
+
+func TestErrorPrefixNotDoubled(t *testing.T) {
+	t.Setenv("PAPER_STORE", "")
+	err := dispatch([]string{"bib", "-all"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.HasPrefix(err.Error(), "paper ") {
+		t.Errorf("error %q must not start with 'paper ' (main.go adds that prefix)", err)
+	}
+	if !strings.HasPrefix(err.Error(), "bib: ") {
+		t.Errorf("error %q should start with the bare command name 'bib: '", err)
 	}
 }

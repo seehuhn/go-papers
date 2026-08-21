@@ -16,38 +16,13 @@
 
 package main
 
-import (
-	"fmt"
-	"os"
-)
+import "flag"
 
-type command struct {
-	name string
-	desc string
-	run  func(args []string) error
-}
-
-var commands []command
-
-func dispatch(args []string) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "-help" || args[0] == "--help" {
-		fmt.Println("usage: paper <command> [arguments]")
-		for _, c := range commands {
-			fmt.Printf("  %-8s %s\n", c.name, c.desc)
-		}
-		return nil
-	}
-	for _, c := range commands {
-		if c.name == args[0] {
-			return c.run(args[1:])
-		}
-	}
-	return fmt.Errorf("unknown command %q; run 'paper help' for the command list", args[0])
-}
-
-func main() {
-	if err := dispatch(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "paper: %v\n", err)
-		os.Exit(1)
-	}
+// newFlagSet returns the standard flag set for a paper subcommand: named
+// after the command, ContinueOnError semantics, and the shared -store
+// flag. The returned string pointer holds the -store value after Parse.
+func newFlagSet(name string) (*flag.FlagSet, *string) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	storeFlag := fs.String("store", "", "path to the paper store (overrides PAPER_STORE)")
+	return fs, storeFlag
 }

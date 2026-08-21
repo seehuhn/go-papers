@@ -17,6 +17,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -49,15 +50,17 @@ type entryLoad struct {
 // to be clean. It returns a non-nil error if any error-severity problem
 // was found.
 func runCheck(args []string) error {
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	storeFlag := fs.String("store", "", "path to the paper store (overrides PAPER_STORE)")
+	fs, storeFlag := newFlagSet("check")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("paper check: parsing arguments: %w", err)
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return fmt.Errorf("check: parsing arguments: %w", err)
 	}
 
 	s, err := store.Open(*storeFlag)
 	if err != nil {
-		return fmt.Errorf("paper check: %w", err)
+		return fmt.Errorf("check: %w", err)
 	}
 
 	keys := fs.Args()
@@ -65,7 +68,7 @@ func runCheck(args []string) error {
 	if wholeStore {
 		allKeys, err := s.Keys()
 		if err != nil {
-			return fmt.Errorf("paper check: %w", err)
+			return fmt.Errorf("check: %w", err)
 		}
 		keys = allKeys
 	}
@@ -162,13 +165,13 @@ func runCheck(args []string) error {
 		}
 		p.Status = "clean"
 		if err := s.Save(p); err != nil {
-			return fmt.Errorf("paper check: promoting %q to clean: %w", r.dirKey, err)
+			return fmt.Errorf("check: promoting %q to clean: %w", r.dirKey, err)
 		}
 		fmt.Printf("%s: promoted from draft to clean\n", r.dirKey)
 	}
 
 	if errorCount > 0 {
-		return fmt.Errorf("paper check: found %d error(s) among %d problem(s)", errorCount, len(problems))
+		return fmt.Errorf("check: found %d error(s) among %d problem(s)", errorCount, len(problems))
 	}
 	return nil
 }
