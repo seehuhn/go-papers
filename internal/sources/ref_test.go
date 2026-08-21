@@ -1,0 +1,50 @@
+// seehuhn.de/go/paper - tools for managing a store of scientific papers
+// Copyright (C) 2026  Jochen Voss <voss@seehuhn.de>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+package sources
+
+import (
+	"testing"
+)
+
+func TestParseRef(t *testing.T) {
+	cases := []struct {
+		in   string
+		want Ref
+	}{
+		{"10.1080/01621459.1963.10500830",
+			Ref{Kind: RefDOI, DOI: "10.1080/01621459.1963.10500830"}},
+		{"https://doi.org/10.1007/BF00535479",
+			Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+		{"doi:10.1007/BF00535479",
+			Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+		{"2412.05039", Ref{Kind: RefArxiv, ArxivID: "2412.05039"}},
+		{"2412.05039v2", Ref{Kind: RefArxiv, ArxivID: "2412.05039", Version: 2}},
+		{"arXiv:2412.05039v2", Ref{Kind: RefArxiv, ArxivID: "2412.05039", Version: 2}},
+		{"https://arxiv.org/abs/2412.05039v2",
+			Ref{Kind: RefArxiv, ArxivID: "2412.05039", Version: 2}},
+		{"https://arxiv.org/pdf/2412.05039", Ref{Kind: RefArxiv, ArxivID: "2412.05039"}},
+		{"math.PR/0605234", Ref{Kind: RefArxiv, ArxivID: "math.PR/0605234"}},
+		{"Hoeffding, Probability inequalities, 1963",
+			Ref{Kind: RefText, Text: "Hoeffding, Probability inequalities, 1963"}},
+		{"  10.1214/aop/1176996548  ", Ref{Kind: RefDOI, DOI: "10.1214/aop/1176996548"}},
+	}
+	for _, c := range cases {
+		if got := ParseRef(c.in); got != c.want {
+			t.Errorf("ParseRef(%q) = %+v, want %+v", c.in, got, c.want)
+		}
+	}
+}
