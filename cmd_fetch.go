@@ -218,23 +218,70 @@ func (f *fetcher) fetchArxiv(ref sources.Ref) error {
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	if entry.DOI != "" {
-		// The preprint names a published version: prefer its metadata.
-		// A Crossref failure here is not fatal — the arXiv-only entry is
-		// still useful — but it must be visible in Pending.
-		if work, werr := f.crossref().Work(entry.DOI); werr != nil {
+
+	if doi := strings.TrimSpace(entry.DOI); doi != "" {
+		// The preprint names a published version, which may already be in
+		// the store under that DOI — the arXiv ID scan above cannot see
+		// it. Check before spending a Crossref request on it.
+		stop, err := f.stopOnDuplicate("DOI "+doi, doi, "")
+		if stop {
+			return err
+		}
+
+		// Otherwise prefer the published metadata. A Crossref failure here
+		// is not fatal — the arXiv-only entry is still useful — but it must
+		// be visible in Pending.
+		if work, werr := f.crossref().Work(doi); werr != nil {
 			p.Pending = addPending(p.Pending, fmt.Sprintf(
-				"crossref lookup of %s failed (%v); published metadata is missing", entry.DOI, werr))
+				"crossref lookup of %s failed (%v); published metadata is missing", doi, werr))
 		} else if published, perr := resolve.FromCrossref(work); perr != nil {
 			p.Pending = addPending(p.Pending, fmt.Sprintf(
-				"crossref record %s is unusable (%v); published metadata is missing", entry.DOI, perr))
+				"crossref record %s is unusable (%v); published metadata is missing", doi, perr))
 		} else {
 			p = resolve.Merge(published, entry)
 		}
 	}
 
-	// arXiv normally reports a version; the fallbacks keep the naming
-	// scheme sane if it ever does not.
+	af := newArxivFetch(entry, ref)
+
+	if f.dryRun {
+		f.reportDryRun(p, nil, []plannedDownload{
+			{url: af.pdfURL, name: af.pdfName},
+			{url: af.srcURL, name: af.base + "/"},
+		})
+		return nil
+	}
+
+	if err := f.create(p, "created from arXiv record "+af.eprintID); err != nil {
+		return err
+	}
+
+	p, err = f.attachDownload(p, af.pdfURL, af.pdfName, "arxiv")
+	if err != nil {
+		return f.arxivFallbackError(p, af, arxivPDFStage, err)
+	}
+	fmt.Printf("downloaded %s from %s\n", af.pdfName, af.pdfURL)
+
+	return f.fetchArxivSource(p, af)
+}
+
+// arxivFetch holds the download-side names and URLs derived from an arXiv
+// record, so that the branch and its error reports agree on them.
+type arxivFetch struct {
+	entry    *sources.ArxivEntry
+	eprintID string // "2412.05039v2"
+	base     string // "arxiv-2412.05039v2"
+	pdfName  string // "arxiv-2412.05039v2.pdf"
+	pdfURL   string
+	srcURL   string
+	absURL   string // canonical abs page, for a human or agent to visit
+}
+
+// newArxivFetch derives the download names and URLs for an arXiv record.
+// arXiv normally reports the ID and version in the record itself; the
+// fallbacks to the parsed reference keep the naming scheme sane if it
+// ever does not.
+func newArxivFetch(entry *sources.ArxivEntry, ref sources.Ref) *arxivFetch {
 	version := entry.Version
 	if version <= 0 {
 		version = ref.Version
@@ -243,30 +290,17 @@ func (f *fetcher) fetchArxiv(ref sources.Ref) error {
 	if id == "" {
 		id = ref.ArxivID
 	}
+
 	base := arxivFileBase(id, version)
-	pdfName := base + ".pdf"
-	pdfURL := arxivPDFURL(id, version)
-	srcURL := arxivSourceURL(id, version)
-
-	if f.dryRun {
-		f.reportDryRun(p, nil, []plannedDownload{
-			{url: pdfURL, name: pdfName},
-			{url: srcURL, name: base + "/"},
-		})
-		return nil
+	return &arxivFetch{
+		entry:    entry,
+		eprintID: arxivEprintID(id, version),
+		base:     base,
+		pdfName:  base + ".pdf",
+		pdfURL:   arxivPDFURL(id, version),
+		srcURL:   arxivSourceURL(id, version),
+		absURL:   "https://arxiv.org/abs/" + arxivEprintID(id, version),
 	}
-
-	if err := f.create(p, "created from arXiv record "+arxivEprintID(id, version)); err != nil {
-		return err
-	}
-
-	p, err = f.attachDownload(p, pdfURL, pdfName, "arxiv")
-	if err != nil {
-		return fmt.Errorf("fetch: %w", err)
-	}
-	fmt.Printf("downloaded %s from %s\n", pdfName, pdfURL)
-
-	return f.fetchArxivSource(p, srcURL, base, pdfName)
 }
 
 // fetchArxivSource downloads and extracts the arXiv e-print source into
@@ -274,33 +308,33 @@ func (f *fetcher) fetchArxiv(ref sources.Ref) error {
 // it cannot go through store.Attach: it is recorded in p.Versions here
 // instead. A PDF-only submission is not a failure; it leaves a note on
 // the PDF version saying that no tex source exists.
-func (f *fetcher) fetchArxivSource(p *store.Paper, srcURL, base, pdfName string) error {
-	destDir := filepath.Join(f.store.Dir(p.Key), base)
-	err := resolve.FetchSource(f.dl, srcURL, destDir, f.email)
+func (f *fetcher) fetchArxivSource(p *store.Paper, af *arxivFetch) error {
+	destDir := filepath.Join(f.store.Dir(p.Key), af.base)
+	err := resolve.FetchSource(f.dl, af.srcURL, destDir, f.email)
 
 	switch {
 	case errors.Is(err, resolve.ErrPDFOnly):
 		if p.Versions == nil {
 			p.Versions = make(map[string]store.Version)
 		}
-		v := p.Versions[pdfName]
+		v := p.Versions[af.pdfName]
 		v.Note = "arXiv submission is PDF-only, no tex source"
-		p.Versions[pdfName] = v
+		p.Versions[af.pdfName] = v
 		p.AppendLog(f.now, "fetch", "no tex source on arXiv: "+resolve.ErrPDFOnly.Error())
 		fmt.Printf("no tex source: %v\n", resolve.ErrPDFOnly)
 	case err != nil:
-		return fmt.Errorf("fetch: downloading arXiv source: %w", err)
+		return f.arxivFallbackError(p, af, arxivSourceStage, err)
 	default:
 		if p.Versions == nil {
 			p.Versions = make(map[string]store.Version)
 		}
-		p.Versions[base] = store.Version{
+		p.Versions[af.base] = store.Version{
 			Acquired: f.now.Format("2006-01-02"),
 			Source:   "arxiv",
 		}
 		store.RecomputeHoldings(p)
-		p.AppendLog(f.now, "attach", base+"/ from arxiv")
-		fmt.Printf("extracted tex source into %s/\n", base)
+		p.AppendLog(f.now, "attach", af.base+"/ from arxiv")
+		fmt.Printf("extracted tex source into %s/\n", af.base)
 	}
 
 	if err := f.store.Save(p); err != nil {
@@ -530,8 +564,13 @@ func (f *fetcher) create(p *store.Paper, detail string) error {
 // attachDownload downloads url into a temporary file and hands that file
 // to store.Attach, which moves it into the paper directory and records
 // it. On a failed Attach the in-memory paper is stale — mutated but not
-// saved — so it is discarded and reloaded from the store; the returned
-// paper is always safe to save.
+// saved — so it is discarded and reloaded from the store, and the
+// reloaded paper is returned instead.
+//
+// The returned paper is never nil, even when that reload fails too:
+// callers build their hand-off message from it, and its identity fields
+// (key, bibtex) survive a failed Attach untouched. Only a paper returned
+// alongside a nil error is safe to save.
 func (f *fetcher) attachDownload(p *store.Paper, url, filename, source string) (*store.Paper, error) {
 	tmpDir, err := os.MkdirTemp("", "paper-fetch-")
 	if err != nil {
@@ -547,7 +586,7 @@ func (f *fetcher) attachDownload(p *store.Paper, url, filename, source string) (
 	if err := f.store.Attach(p, tmpPath, filename, source, f.now); err != nil {
 		reloaded, loadErr := f.store.Load(p.Key)
 		if loadErr != nil {
-			return nil, fmt.Errorf("%w (reloading %s afterwards also failed: %v)", err, p.Key, loadErr)
+			return p, fmt.Errorf("%w (reloading %s afterwards also failed: %v)", err, p.Key, loadErr)
 		}
 		return reloaded, err
 	}
@@ -610,6 +649,59 @@ func (f *fetcher) noOARouteError(p *store.Paper, work *sources.CrossrefWork, ver
 		"and record it under \"versions\" in %s.",
 		filepath.Join(f.store.Dir(p.Key), "published.pdf"),
 		filepath.Join(f.store.Dir(p.Key), "paper.json"))
+	return errors.New(b.String())
+}
+
+// arxivStage names which half of an arXiv fetch failed.
+type arxivStage int
+
+const (
+	arxivPDFStage arxivStage = iota
+	arxivSourceStage
+)
+
+// arxivFallbackError reports that an arXiv download failed after the
+// entry was created. Like noOARouteError it is a hand-off, not a bare
+// failure: the entry stays in the store and the message carries what
+// fetch learned, what state the entry was left in, and why the download
+// failed.
+func (f *fetcher) arxivFallbackError(p *store.Paper, af *arxivFetch, stage arxivStage, cause error) error {
+	what, held := "PDF", "nothing yet — the download failed before any file was stored"
+	source := af.absURL
+	target := filepath.Join(f.store.Dir(p.Key), af.pdfName)
+	if stage == arxivSourceStage {
+		what = "tex source"
+		held = af.pdfName + ", downloaded and recorded; only the tex source is missing"
+		source = af.srcURL
+		target = filepath.Join(f.store.Dir(p.Key), af.base) + "/"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "fetch: could not download the arXiv %s for %s.\n", what, p.Key)
+	fmt.Fprintf(&b, "The draft entry was created in %s.\n", f.store.Dir(p.Key))
+	fmt.Fprintf(&b, "What it holds: %s.\n", held)
+	fmt.Fprintf(&b, "The download failed because: %v\n", cause)
+
+	e := af.entry
+	b.WriteString("\nWhat is known about the paper:\n")
+	fmt.Fprintf(&b, "  authors: %s\n", authorList(e.Authors))
+	if e.Title != "" {
+		fmt.Fprintf(&b, "  title:   %s\n", e.Title)
+	}
+	fmt.Fprintf(&b, "  year:    %s\n", yearString(e.Year))
+	fmt.Fprintf(&b, "  arxiv:   %s\n", af.absURL)
+	if e.PrimaryClass != "" {
+		fmt.Fprintf(&b, "  class:   %s\n", e.PrimaryClass)
+	}
+	if e.DOI != "" {
+		fmt.Fprintf(&b, "  doi:     https://doi.org/%s\n", e.DOI)
+	}
+	if e.JournalRef != "" {
+		fmt.Fprintf(&b, "  journal ref: %s\n", e.JournalRef)
+	}
+
+	fmt.Fprintf(&b, "\nFetch it by hand from %s, put it at %s,\nand record it under \"versions\" in %s.",
+		source, target, filepath.Join(f.store.Dir(p.Key), "paper.json"))
 	return errors.New(b.String())
 }
 

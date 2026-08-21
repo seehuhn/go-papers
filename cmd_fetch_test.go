@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/store"
@@ -241,6 +242,205 @@ func TestFetchArxiv(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "voss_2024", "arxiv-2412.05039v2", "main.tex")); err != nil {
 		t.Error("extracted tex source missing")
 	}
+}
+
+// arxivResponseWithDOI is an arXiv API response for a record that names a
+// published version, so resolving it must consider that DOI.
+const arxivResponseWithDOI = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2412.05039v2</id>
+    <title>A study of SPDEs in Greenland</title>
+    <summary>We study stochastic partial differential equations.</summary>
+    <published>2024-12-06T14:00:00Z</published>
+    <author><name>Jochen Voß</name></author>
+    <arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.1234/example.doi</arxiv:doi>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="math.PR"/>
+    <category term="math.PR"/>
+  </entry>
+</feed>`
+
+// TestFetchArxivEntryPassesCheck is the regression test for the ruling
+// that the bibtex eprint field holds the bare arXiv ID: with a version
+// suffix, every fetched arXiv entry trips check's eprint/arxiv.id
+// consistency rule the moment it is created.
+func TestFetchArxivEntryPassesCheck(t *testing.T) {
+	fetchFixtureStore(t)
+	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "e-print") {
+			w.Write(gzipTarballBytes(t))
+			return
+		}
+		io.WriteString(w, "%PDF-1.4 arxiv pdf")
+	}))
+	t.Cleanup(pdfSrv.Close)
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseNoDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	overrideBases(t, "", arxivSrv.URL, "", "", "")
+	savedDL := arxivDownloadBase
+	arxivDownloadBase = pdfSrv.URL
+	t.Cleanup(func() { arxivDownloadBase = savedDL })
+
+	if err := runFetch([]string{"arXiv:2412.05039v2"}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := store.Open("")
+	p, err := s.Load("voss_2024")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Bibtex.Fields["eprint"]; got != "2412.05039" {
+		t.Errorf("eprint = %q, want the bare ID", got)
+	}
+
+	var checkErr error
+	out := captureStdout(t, func() { checkErr = runCheck(nil) })
+	if checkErr != nil {
+		t.Errorf("a freshly fetched arXiv entry must pass check, got %v\n%s", checkErr, out)
+	}
+}
+
+// TestFetchArxivPDFFailureReportsContext pins the agent-fallback contract
+// on the arXiv branch: once the entry is created, a failed download must
+// hand over everything fetch has learned.
+func TestFetchArxivPDFFailureReportsContext(t *testing.T) {
+	fetchFixtureStore(t)
+	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, "<html>Please sign in</html>")
+	}))
+	t.Cleanup(pdfSrv.Close)
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseNoDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	overrideBases(t, "", arxivSrv.URL, "", "", "")
+	savedDL := arxivDownloadBase
+	arxivDownloadBase = pdfSrv.URL
+	t.Cleanup(func() { arxivDownloadBase = savedDL })
+
+	err := runFetch([]string{"arXiv:2412.05039v2"})
+	if err == nil {
+		t.Fatal("a failed PDF download must be reported")
+	}
+	for _, want := range []string{"voss_2024", "arxiv.org/abs/2412.05039v2", "not a PDF", "Voß"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got:\n%s", want, err)
+		}
+	}
+	s, _ := store.Open("")
+	p, err := s.Load("voss_2024")
+	if err != nil || p.Holdings != "none" {
+		t.Errorf("the draft entry must survive the failed download: %+v, %v", p, err)
+	}
+}
+
+// TestFetchArxivDuplicateDOI covers the duplicate check on the DOI the
+// arXiv record teaches us: a paper already in the store under its
+// published DOI must not gain a second entry via its preprint.
+func TestFetchArxivDuplicateDOI(t *testing.T) {
+	fetchFixtureStore(t)
+	s, _ := store.Open("")
+	err := s.Save(&store.Paper{Key: "voss_2024", Status: "clean", Holdings: "published",
+		DOI: "10.1234/example.doi",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Vo{\\ss}, Jochen", "title": "T", "journal": "J", "year": "2024"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseWithDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	// A known duplicate must be caught before the Crossref merge request
+	// and before any download; both servers fail the test if contacted,
+	// which also keeps a regression from reaching the live services.
+	guardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a known duplicate must not be looked up or downloaded: %s", r.URL)
+	}))
+	t.Cleanup(guardSrv.Close)
+	overrideBases(t, guardSrv.URL, arxivSrv.URL, "", "", "")
+	savedDL := arxivDownloadBase
+	arxivDownloadBase = guardSrv.URL
+	t.Cleanup(func() { arxivDownloadBase = savedDL })
+
+	err = runFetch([]string{"arXiv:2412.05039v2"})
+	if err == nil || !strings.Contains(err.Error(), "voss_2024") {
+		t.Errorf("the published DOI of an arXiv record must be checked too, got %v", err)
+	}
+	if keys, _ := s.Keys(); len(keys) != 1 {
+		t.Errorf("no second entry may be created, found %v", keys)
+	}
+}
+
+// TestAttachDownloadNeverReturnsNilPaper pins the contract its callers
+// rely on: however badly Attach goes, the returned paper can still be
+// used to build the hand-off message. It used to return nil when the
+// reload failed, which turned a hand-off into a panic.
+func TestAttachDownloadNeverReturnsNilPaper(t *testing.T) {
+	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "%PDF-1.4 the paper")
+	}))
+	t.Cleanup(pdfSrv.Close)
+
+	newFetcher := func(t *testing.T) *fetcher {
+		t.Helper()
+		s, err := store.Open("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &fetcher{store: s, api: pdfSrv.Client(), dl: pdfSrv.Client(), now: time.Now()}
+	}
+	paper := func() *store.Paper {
+		return &store.Paper{Key: "hoeffding_1963", Status: "draft", Holdings: "none",
+			Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+				"author": "Hoeffding, Wassily", "title": "T", "journal": "J", "year": "1963"}}}
+	}
+
+	t.Run("reload succeeds", func(t *testing.T) {
+		dir := fetchFixtureStore(t)
+		f := newFetcher(t)
+		p := paper()
+		if err := f.store.Save(p); err != nil {
+			t.Fatal(err)
+		}
+		// A directory where the file should go: Attach refuses to overwrite.
+		if err := os.MkdirAll(filepath.Join(dir, p.Key, "published.pdf"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := f.attachDownload(p, pdfSrv.URL, "published.pdf", "unpaywall")
+		if err == nil {
+			t.Fatal("Attach should have refused the existing destination")
+		}
+		if got == nil || got.Key != "hoeffding_1963" {
+			t.Errorf("attachDownload must return a usable paper, got %+v", got)
+		}
+	})
+
+	t.Run("reload also fails", func(t *testing.T) {
+		dir := fetchFixtureStore(t)
+		f := newFetcher(t)
+		p := paper()
+		// The destination is in the way and the directory holds no
+		// paper.json, so the reload after the failed Attach fails too.
+		if err := os.MkdirAll(filepath.Join(dir, p.Key, "published.pdf"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := f.attachDownload(p, pdfSrv.URL, "published.pdf", "unpaywall")
+		if err == nil {
+			t.Fatal("Attach should have refused the existing destination")
+		}
+		if got == nil || got.Key != "hoeffding_1963" {
+			t.Errorf("attachDownload must return a usable paper even when the reload fails, got %+v", got)
+		}
+		if !strings.Contains(err.Error(), "reloading") {
+			t.Errorf("the error should record the failed reload, got %v", err)
+		}
+	})
 }
 
 func TestFetchFreeTextAmbiguous(t *testing.T) {
