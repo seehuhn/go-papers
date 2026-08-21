@@ -17,11 +17,51 @@
 package sources
 
 import (
+	"bytes"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 )
+
+// dblpAuthor is a single author entry in a DBLP hit.
+type dblpAuthor struct {
+	Text string `json:"text"`
+}
+
+// dblpAuthorList decodes a DBLP "author" member. DBLP serializes this as a
+// JSON array when a hit has multiple authors, but collapses it to a bare
+// author object when there is exactly one. UnmarshalJSON accepts both
+// shapes; a malformed member is tolerated as an empty list rather than
+// causing an error, consistent with this client's tolerant-parsing
+// contract.
+type dblpAuthorList []dblpAuthor
+
+func (l *dblpAuthorList) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	switch {
+	case len(data) == 0, string(data) == "null":
+		*l = nil
+	case data[0] == '[':
+		var arr []dblpAuthor
+		if err := json.Unmarshal(data, &arr); err != nil {
+			*l = nil
+			return nil
+		}
+		*l = arr
+	case data[0] == '{':
+		var one dblpAuthor
+		if err := json.Unmarshal(data, &one); err != nil {
+			*l = nil
+			return nil
+		}
+		*l = dblpAuthorList{one}
+	default:
+		*l = nil
+	}
+	return nil
+}
 
 // dblpSearchResult is the envelope returned by the DBLP publication search
 // API. Only the fields needed to build a Candidate are parsed; all others
@@ -36,9 +76,7 @@ type dblpSearchResult struct {
 					Year    string `json:"year"`
 					DOI     string `json:"doi"`
 					Authors struct {
-						Author []struct {
-							Text string `json:"text"`
-						} `json:"author"`
+						Author dblpAuthorList `json:"author"`
 					} `json:"authors"`
 				} `json:"info"`
 			} `json:"hit"`

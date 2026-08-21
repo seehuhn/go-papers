@@ -30,6 +30,10 @@ const dblpFixture = `{"result":{"hits":{"hit":[
 
 const dblpNoHitsFixture = `{"result":{"hits":{}}}`
 
+const dblpSingleAuthorFixture = `{"result":{"hits":{"hit":[
+  {"info":{"title":"Solo-Authored Paper.","venue":"CoRR","year":"2015",
+    "authors":{"author":{"text":"Solo Author"}}}}]}}}`
+
 func TestDBLPSearch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("format") != "json" {
@@ -45,6 +49,21 @@ func TestDBLPSearch(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0].Source != "dblp" || hits[0].Year != 2010 ||
 		len(hits[0].Authors) != 2 || hits[0].Authors[0] != "Gabor Lugosi" {
+		t.Errorf("hits = %+v", hits)
+	}
+}
+
+func TestDBLPSearchSingleAuthorObject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, dblpSingleAuthorFixture)
+	}))
+	t.Cleanup(srv.Close)
+	d := &DBLP{BaseURL: srv.URL, Client: srv.Client()}
+	hits, err := d.Search("solo authored paper", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || len(hits[0].Authors) != 1 || hits[0].Authors[0] != "Solo Author" {
 		t.Errorf("hits = %+v", hits)
 	}
 }
