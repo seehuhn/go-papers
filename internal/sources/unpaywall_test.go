@@ -54,3 +54,21 @@ func TestUnpaywallRequiresEmail(t *testing.T) {
 		t.Errorf("missing email: got %v, want an error mentioning config.json", err)
 	}
 }
+
+func TestUnpaywallTaggedEmail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("email") != "test+tag@example.org" {
+			t.Errorf("email param not properly encoded, url %s, got %s", r.URL, r.URL.Query().Get("email"))
+		}
+		io.WriteString(w, unpaywallFixture)
+	}))
+	t.Cleanup(srv.Close)
+	u := &Unpaywall{BaseURL: srv.URL, Client: srv.Client(), Email: "test+tag@example.org"}
+	res, err := u.Lookup("10.1234/example.doi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsOA || res.BestOALocation == nil {
+		t.Errorf("result = %+v", res)
+	}
+}

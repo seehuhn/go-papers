@@ -19,6 +19,7 @@ package sources
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 type OALocation struct {
@@ -38,6 +39,14 @@ type Unpaywall struct {
 	Email   string // REQUIRED by the API
 }
 
+// baseURL returns u.BaseURL, defaulting to the public Unpaywall API.
+func (u *Unpaywall) baseURL() string {
+	if u.BaseURL == "" {
+		return "https://api.unpaywall.org"
+	}
+	return u.BaseURL
+}
+
 // Lookup queries the OA status of a DOI. Calling with an empty Email
 // returns an error telling the agent to configure config.json.
 func (u *Unpaywall) Lookup(doi string) (*UnpaywallResult, error) {
@@ -45,15 +54,12 @@ func (u *Unpaywall) Lookup(doi string) (*UnpaywallResult, error) {
 		return nil, fmt.Errorf("unpaywall requires a contact email: add {\"email\": \"you@example.org\"} to config.json in the store root")
 	}
 
-	baseURL := u.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.unpaywall.org"
-	}
-
-	url := baseURL + "/v2/" + doi + "?email=" + u.Email
+	q := url.Values{}
+	q.Set("email", u.Email)
+	urlStr := u.baseURL() + "/v2/" + doi + "?" + q.Encode()
 
 	var result UnpaywallResult
-	if err := getJSON(u.Client, url, httpOptions{Email: u.Email}, &result); err != nil {
+	if err := getJSON(u.Client, urlStr, httpOptions{Email: u.Email}, &result); err != nil {
 		return nil, fmt.Errorf("unpaywall: fetching %s: %w", doi, err)
 	}
 	return &result, nil
