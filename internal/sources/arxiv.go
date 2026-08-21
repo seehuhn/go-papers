@@ -93,7 +93,7 @@ type arxivFeedPrimClass struct {
 var arxivIDRe = regexp.MustCompile(`/abs/(.+?)(?:v(\d+))?$`)
 
 // ByID fetches the record for one arXiv ID (with or without version
-// suffix). An unknown ID returns an error containing "not found".
+// suffix). An unknown ID returns an error wrapping ErrNotFound.
 func (a *Arxiv) ByID(id string) (*ArxivEntry, error) {
 	client := a.Client
 	if client == nil {
@@ -133,7 +133,7 @@ func (a *Arxiv) ByID(id string) (*ArxivEntry, error) {
 	}
 
 	if len(feed.Entries) == 0 {
-		return nil, fmt.Errorf("arxiv: %s: not found", id)
+		return nil, fmt.Errorf("arxiv: %s: %w", id, ErrNotFound)
 	}
 	// id_list carries exactly one ID, so the query returns at most one entry.
 	entry := feed.Entries[0]

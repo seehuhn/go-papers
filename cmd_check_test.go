@@ -240,3 +240,65 @@ func TestCheckOnline(t *testing.T) {
 		t.Errorf("the good entry must not error:\n%s", out)
 	}
 }
+
+// TestCheckOnlineDoesNotMisreadA5xxBodyAsNotFound is the regression test
+// for the review finding that checkOnline used to detect a 404 by
+// matching the literal text "not found" in the error message. getJSON's
+// non-404 branch embeds up to 200 raw bytes of the response body in that
+// same message, so a 5xx error page (a proxy or CDN failure, a
+// rate-limit response, ...) whose body happens to contain the words "not
+// found" was misclassified as a hallucinated DOI: an ERROR that wrongly
+// blocked draft->clean promotion and the exit code, breaking the rule
+// that Crossref being down must not fail every entry. checkOnline must
+// instead use errors.Is against the typed sources.ErrNotFound sentinel,
+// which only a genuine 404 wraps.
+func TestCheckOnlineDoesNotMisreadA5xxBodyAsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PAPER_STORE", dir)
+	s, _ := store.Open("")
+	flaky := &store.Paper{Key: "flaky_2021", Status: "draft", Holdings: "none",
+		DOI: "10.5555/flaky.example",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Flake, Fiona", "title": "A paper behind a flaky proxy", "journal": "Nowhere",
+			"year": "2021", "doi": "10.5555/flaky.example"}}}
+	phantom := &store.Paper{Key: "phantom_2020", Status: "clean", Holdings: "none",
+		DOI: "10.9999/does.not.exist",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Phantom, Paul", "title": "Ghost paper", "journal": "Nowhere",
+			"year": "2020", "doi": "10.9999/does.not.exist"}}}
+	s.Save(flaky)
+	s.Save(phantom)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "10.5555") {
+			// A 5xx error page whose body happens to contain the literal
+			// text "not found" - unlike an actual 404, this must not be
+			// classified as a hallucinated/mistyped DOI.
+			w.WriteHeader(http.StatusInternalServerError)
+			io.WriteString(w, `{"error":"upstream route not found in cache"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	overrideBases(t, srv.URL, "", "", "", "")
+
+	out := captureStdout(t, func() {
+		if err := runCheck([]string{"-online"}); err == nil {
+			t.Error("the genuinely unresolvable phantom DOI must still make check fail")
+		}
+	})
+
+	if !strings.Contains(out, "flaky_2021: warning") {
+		t.Errorf("a 5xx response must be reported as a warning:\n%s", out)
+	}
+	if strings.Contains(out, "flaky_2021: error") {
+		t.Errorf("a 5xx response body containing \"not found\" must never be classified as a not-found error:\n%s", out)
+	}
+	if !strings.Contains(out, "flaky_2021: promoted from draft to clean") {
+		t.Errorf("a warning-only entry must still be promoted from draft to clean:\n%s", out)
+	}
+	if !strings.Contains(out, "phantom_2020: error") || !strings.Contains(out, "does not resolve") {
+		t.Errorf("the genuinely 404 entry must still be reported as an error:\n%s", out)
+	}
+}

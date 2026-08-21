@@ -18,6 +18,7 @@ package sources
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,18 @@ import (
 // maxBodySize caps the number of bytes read from an HTTP response body, to
 // protect against unexpectedly large or malicious responses.
 const maxBodySize = 10 << 20 // 10 MB
+
+// ErrNotFound is the sentinel a client wraps into its returned error when
+// the remote service reports that the requested resource does not exist
+// (a Crossref/arXiv 404, or an arXiv query whose feed comes back empty).
+// A caller that needs to tell "this identifier does not exist" apart from
+// every other kind of failure (a 5xx, a timeout, a malformed response)
+// must check with errors.Is(err, sources.ErrNotFound) rather than
+// matching on the error text: the non-404 branch of getJSON below embeds
+// up to 200 raw bytes of the response body, which could itself contain
+// the words "not found" (a rate-limit page, an HTML error page, ...), so
+// string-matching on that text is not safe.
+var ErrNotFound = errors.New("not found")
 
 // httpOptions carries per-request settings for getJSON.
 type httpOptions struct {
@@ -45,8 +58,8 @@ func UserAgent(email string) string {
 
 // getJSON fetches url and decodes the JSON response body into out. Unknown
 // JSON members are tolerated. Non-200 statuses become errors: a 404
-// produces an error containing "not found", other statuses produce an
-// error naming the status code and up to 200 bytes of the response body.
+// produces an error wrapping ErrNotFound, other statuses produce an error
+// naming the status code and up to 200 bytes of the response body.
 func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -72,7 +85,7 @@ func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("not found: %s", url)
+			return fmt.Errorf("%w: %s", ErrNotFound, url)
 		}
 		snippet := body
 		if len(snippet) > 200 {

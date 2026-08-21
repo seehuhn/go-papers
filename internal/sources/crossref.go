@@ -91,8 +91,8 @@ func (c *Crossref) baseURL() string {
 	return c.BaseURL
 }
 
-// Work fetches metadata for one DOI. A 404 returns an error containing
-// "not found".
+// Work fetches metadata for one DOI. A 404 returns an error wrapping
+// ErrNotFound.
 func (c *Crossref) Work(doi string) (*CrossrefWork, error) {
 	u := c.baseURL() + "/works/" + doi
 	if c.Email != "" {

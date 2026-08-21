@@ -208,18 +208,23 @@ func runCheck(args []string) error {
 const titleSimilarityThreshold = 0.8
 
 // checkOnline verifies one entry's DOI against Crossref, returning the
-// problems found. A DOI that Crossref reports as not found is severity
-// error: unlike a mismatched title or year, it means the DOI itself is
-// wrong - a typo or a hallucination - which is a genuine problem with the
-// entry, so it blocks draft->clean promotion and the exit code like any
-// other error. A title or year that disagrees with Crossref's record, and
-// any other lookup failure (Crossref down, a timeout, a 5xx), is only a
-// warning: Crossref being unreachable, slow to update, or simply wrong
-// must not fail every entry that has a DOI.
+// problems found. A DOI that Crossref reports as not found (sources.Work
+// returning an error wrapping sources.ErrNotFound) is severity error:
+// unlike a mismatched title or year, it means the DOI itself is wrong - a
+// typo or a hallucination - which is a genuine problem with the entry, so
+// it blocks draft->clean promotion and the exit code like any other
+// error. A title or year that disagrees with Crossref's record, and any
+// other lookup failure (Crossref down, a timeout, a 5xx, or anything else
+// that is not specifically a 404), is only a warning: Crossref being
+// unreachable, slow to update, or simply wrong must not fail every entry
+// that has a DOI. The distinction is made with errors.Is against the
+// sentinel, not by matching error text: a non-404 failure can legitimately
+// embed a snippet of the remote response body (see getJSON), which could
+// itself contain the words "not found" and must not be misread as a 404.
 func checkOnline(c *sources.Crossref, key string, p *store.Paper) []store.Problem {
 	work, err := c.Work(p.DOI)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sources.ErrNotFound) {
 			return []store.Problem{{Key: key, Severity: "error",
 				Msg: "does not resolve at Crossref (HTTP 404): likely a typo or a hallucinated DOI"}}
 		}
