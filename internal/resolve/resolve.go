@@ -122,7 +122,12 @@ func FromCrossref(w *sources.CrossrefWork) (*store.Paper, error) {
 	}, nil
 }
 
-// FromArxiv builds a preprint-only draft (@misc with eprint fields).
+// FromArxiv builds a preprint-only draft (@misc with eprint fields). The
+// eprint field carries the bare arXiv ID, with no version suffix: that
+// matches arXiv's own bibtex snippets and store.CheckPaper's
+// eprint/arxiv.id consistency rule. The version is recorded in
+// Arxiv.Version, and in the version-qualified names of the downloaded
+// files.
 func FromArxiv(e *sources.ArxivEntry) (*store.Paper, error) {
 	identity := arxivIdentity(e)
 
@@ -151,7 +156,7 @@ func FromArxiv(e *sources.ArxivEntry) (*store.Paper, error) {
 		"author":        authorField,
 		"title":         bibtex.BraceTitle(tex.Encode(e.Title)),
 		"year":          yearStr,
-		"eprint":        arxivEprint(e.ID, e.Version),
+		"eprint":        e.ID,
 		"archiveprefix": "arXiv",
 	}
 	if e.PrimaryClass != "" {
@@ -174,7 +179,8 @@ func FromArxiv(e *sources.ArxivEntry) (*store.Paper, error) {
 
 // Merge overlays arXiv supplementary fields (eprint, archiveprefix,
 // primaryclass, abstract, arxiv ref) onto a Crossref-derived paper: the
-// published metadata is the entry, per the spec's best-version rule.
+// published metadata is the entry, per the spec's best-version rule. As
+// in FromArxiv, the eprint field is the bare ID.
 func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 	m := *published
 
@@ -182,7 +188,7 @@ func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 	for k, v := range published.Bibtex.Fields {
 		fields[k] = v
 	}
-	fields["eprint"] = arxivEprint(e.ID, e.Version)
+	fields["eprint"] = e.ID
 	fields["archiveprefix"] = "arXiv"
 	if e.PrimaryClass != "" {
 		fields["primaryclass"] = e.PrimaryClass
@@ -193,15 +199,6 @@ func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 	m.Abstract = e.Abstract
 
 	return &m
-}
-
-// arxivEprint formats an arXiv ID with its version suffix, e.g.
-// "2412.05039v2". An unknown version (0) is omitted.
-func arxivEprint(id string, version int) string {
-	if version <= 0 {
-		return id
-	}
-	return fmt.Sprintf("%sv%d", id, version)
 }
 
 // encodeCrossrefAuthors builds a bibtex author field from Crossref author

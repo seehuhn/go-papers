@@ -333,10 +333,11 @@ var yearRe = regexp.MustCompile(`\b(1[89][0-9]{2}|20[0-9]{2})\b`)
 
 // autoAccept returns the Crossref hit that free-text resolution may take
 // without asking, or nil when the query does not pin one down. The top hit
-// qualifies only if it outscores the runner-up by scoreMargin (or stands
-// alone) and the query names a year that matches it. A query with no year
-// never auto-accepts: there is nothing to confirm the hit against, and a
-// wrong entry costs more than a second round trip.
+// qualifies if it outscores the runner-up by scoreMargin (or stands alone)
+// and no year named in the query contradicts it. A query naming no year is
+// decided by the score ratio alone: there is nothing to contradict, and
+// that gate — together with draft status and the duplicate check — is the
+// guard against a wrong entry.
 func autoAccept(hits []*sources.CrossrefWork, query string) *sources.CrossrefWork {
 	if len(hits) == 0 {
 		return nil
@@ -351,7 +352,7 @@ func autoAccept(hits []*sources.CrossrefWork, query string) *sources.CrossrefWor
 
 	years := yearRe.FindAllString(query, -1)
 	if len(years) == 0 {
-		return nil
+		return top
 	}
 	hitYear := strconv.Itoa(top.Published.Year())
 	for _, y := range years {
@@ -390,7 +391,7 @@ func (f *fetcher) ambiguousError(query string, hits []*sources.CrossrefWork) err
 	if len(hits) == 0 {
 		b.WriteString("Crossref found nothing for this query.\n")
 	} else {
-		b.WriteString("Crossref's top hit is not clearly better than the rest, or the query names no year to confirm it.\n")
+		b.WriteString("Crossref's top hit is not clearly better than the rest, or a year in the query contradicts it.\n")
 	}
 
 	if len(candidates) == 0 {

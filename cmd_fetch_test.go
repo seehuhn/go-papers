@@ -321,9 +321,46 @@ func TestFetchFreeTextAccepted(t *testing.T) {
 	}
 }
 
-// TestFetchFreeTextNoYear pins the safety half of the auto-accept rule: a
-// query with no year never auto-accepts, however clear the top hit is.
+// TestFetchFreeTextNoYear pins the year condition as vacuous: when the
+// query names no year there is nothing to contradict, so the score ratio
+// alone decides and a clear top hit is still accepted.
 func TestFetchFreeTextNoYear(t *testing.T) {
+	dir := fetchFixtureStore(t)
+	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "%PDF-1.4 the paper")
+	}))
+	t.Cleanup(pdfSrv.Close)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/works", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefClearSearchResponse)
+	})
+	mux.HandleFunc("/works/", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefWorkResponse)
+	})
+	crossrefSrv := httptest.NewServer(mux)
+	t.Cleanup(crossrefSrv.Close)
+	upwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"is_oa":true,"best_oa_location":{"url_for_pdf":%q,"host_type":"repository"}}`, pdfSrv.URL)
+	}))
+	t.Cleanup(upwSrv.Close)
+	candSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("candidate search must not run after an accepted hit: %s", r.URL)
+	}))
+	t.Cleanup(candSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, candSrv.URL, candSrv.URL)
+
+	if err := runFetch([]string{"Hoeffding probability inequalities"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hoeffding_1963", "published.pdf")); err != nil {
+		t.Error("a clear top hit must be accepted even when the query names no year")
+	}
+}
+
+// TestFetchFreeTextYearMismatch pins the other side of the same rule: a
+// year in the query that contradicts the top hit blocks the auto-accept,
+// however clear the scores are.
+func TestFetchFreeTextYearMismatch(t *testing.T) {
 	fetchFixtureStore(t)
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, crossrefClearSearchResponse)
@@ -339,9 +376,9 @@ func TestFetchFreeTextNoYear(t *testing.T) {
 	t.Cleanup(dblpSrv.Close)
 	overrideBases(t, crossrefSrv.URL, "", "", zbSrv.URL, dblpSrv.URL)
 
-	err := runFetch([]string{"Hoeffding probability inequalities"})
+	err := runFetch([]string{"Hoeffding probability inequalities 1994"})
 	if err == nil || !strings.Contains(err.Error(), "re-run") {
-		t.Errorf("a query without a year must not auto-accept, got %v", err)
+		t.Errorf("a year that contradicts the top hit must block acceptance, got %v", err)
 	}
 	s, _ := store.Open("")
 	if keys, _ := s.Keys(); len(keys) != 0 {

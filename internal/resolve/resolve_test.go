@@ -104,7 +104,9 @@ func TestFromArxiv(t *testing.T) {
 	if f["title"] != "A study of {SPDEs} in Greenland" {
 		t.Errorf("title = %q", f["title"])
 	}
-	if f["eprint"] != "2412.05039v2" || f["archiveprefix"] != "arXiv" || f["primaryclass"] != "math.PR" {
+	// The eprint field carries the bare ID: the version lives in
+	// paper.json's arxiv.version and in the version-qualified file names.
+	if f["eprint"] != "2412.05039" || f["archiveprefix"] != "arXiv" || f["primaryclass"] != "math.PR" {
 		t.Errorf("eprint fields = %q/%q/%q", f["eprint"], f["archiveprefix"], f["primaryclass"])
 	}
 	if p.Bibtex.Type != "misc" || p.Arxiv == nil || p.Arxiv.ID != "2412.05039" || p.Arxiv.Version != 2 {
@@ -127,7 +129,7 @@ func TestMerge(t *testing.T) {
 	if m.Bibtex.Fields["journal"] == "" {
 		t.Error("merge must keep the published journal field")
 	}
-	if m.Bibtex.Fields["eprint"] != "2412.05039v2" {
+	if m.Bibtex.Fields["eprint"] != "2412.05039" {
 		t.Errorf("eprint = %q", m.Bibtex.Fields["eprint"])
 	}
 	if m.Arxiv == nil || m.Abstract == "" {
