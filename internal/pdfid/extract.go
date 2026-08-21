@@ -19,9 +19,8 @@
 package pdfid
 
 import (
-	"bytes"
 	"cmp"
-	"errors"
+	"encoding/xml"
 	"fmt"
 	"maps"
 	"math"
@@ -58,15 +57,20 @@ type DocText struct {
 	// font size of TopLines[i].  The two slices always have equal length.
 	TopLines []string
 	TopSizes []float64
-	// XMP is the document-level XMP metadata packet serialised back to
-	// XML text, "" when the document has no metadata stream (or the
-	// packet could not be serialised).  It is scanned for identifiers
-	// with the same regexes as the other text.  The text is capped at
-	// maxXMPBytes.
+	// XMP is the text of every property in the document-level XMP
+	// metadata packet, collected by walking Packet.Properties and joined
+	// with newlines; "" when the document has no metadata stream.  It is
+	// scanned for identifiers with the same regexes as the other text.
+	// Reading properties directly (rather than serialising the packet
+	// back to XML and scanning that) keeps identifiers such as legacy
+	// SICI DOIs, which contain '<' and '>', from being corrupted by XML
+	// entity-escaping.  The joined text is capped at maxXMPBytes.
 	XMP string
 	// XMPTitle is the dc:title property of the XMP packet, "" if unset.
 	// It is kept separately because a title cannot reliably be recovered
-	// from the serialised XML by pattern matching.
+	// from DocText.XMP by pattern matching (the property's language
+	// alternatives and x-default fallback need the typed dc:title
+	// lookup that [xmpTitle] performs).
 	XMPTitle string
 }
 
@@ -99,7 +103,7 @@ func Extract(path string, maxPages int) (*DocText, error) {
 	}
 
 	if md := r.GetMeta().Catalog.Metadata; md != nil && md.Data != nil {
-		res.XMP = serializeXMP(md.Data)
+		res.XMP = xmpText(md.Data)
 		res.XMPTitle = xmpTitle(md.Data)
 	}
 
@@ -142,49 +146,115 @@ func Extract(path string, maxPages int) (*DocText, error) {
 	return res, nil
 }
 
-// serializeXMP renders an XMP packet back to XML text, truncated to
-// maxXMPBytes.  The text is only used for pattern matching, so a
-// truncated packet is still useful (properties past the cap are simply
-// not scanned) and a packet which cannot be serialised at all is
-// reported as "" rather than as an error.
-func serializeXMP(p *xmp.Packet) string {
-	w := &capWriter{limit: maxXMPBytes}
-	if err := p.Write(w, nil); err != nil && w.buf.Len() < w.limit {
-		// the write failed for a reason other than the size cap
-		return ""
+// xmpText collects the text of every property in an XMP packet by walking
+// p.Properties (and, recursively, any RawStruct/RawArray container found
+// along the way) and joining the text leaves with newlines, capped at
+// maxXMPBytes.  Raw is a closed set of four types - Text, URL, RawStruct,
+// and RawArray - so this walk reaches every namespace stored in the
+// packet, including ones this package has no typed model for (e.g.
+// prism:doi, pdfx:doi).  Unlike serialising the packet back to XML and
+// scanning that, the returned text is never entity-escaped, so an
+// identifier containing '<' or '>' (a legacy SICI DOI, say) comes back
+// intact instead of corrupted into "&lt;"/"&gt;" and silently
+// mismatched by the caller's regex.
+//
+// The cap bounds the joined result: metadata packets are occasionally
+// huge (embedded thumbnails, edit histories) and a megabyte is far more
+// than any identifier-bearing packet needs.
+func xmpText(p *xmp.Packet) string {
+	c := &xmpTextCollector{limit: maxXMPBytes}
+	for _, name := range slices.SortedFunc(maps.Keys(p.Properties), compareXMLName) {
+		if c.done() {
+			break
+		}
+		c.walk(p.Properties[name])
+	}
+
+	s := c.b.String()
+	if len(s) > maxXMPBytes {
+		s = s[:maxXMPBytes]
 	}
 	// truncation can cut a multi-byte character in half
-	return strings.ToValidUTF8(w.buf.String(), "")
+	return strings.ToValidUTF8(s, "")
 }
 
-// errXMPTooLong is returned by capWriter once its limit is reached.
-var errXMPTooLong = errors.New("XMP packet exceeds size limit")
+// compareXMLName orders xml.Names by namespace then local name, giving
+// xmpText a deterministic scan order.
+func compareXMLName(a, b xml.Name) int {
+	if c := strings.Compare(a.Space, b.Space); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Local, b.Local)
+}
 
-// capWriter is an [io.Writer] which collects at most limit bytes and
-// then reports errXMPTooLong to stop the writer feeding it.
-type capWriter struct {
-	buf   bytes.Buffer
+// xmpTextCollector accumulates the text leaves visited by its walk
+// method, stopping once limit bytes have been collected.
+type xmpTextCollector struct {
+	b     strings.Builder
 	limit int
 }
 
-func (w *capWriter) Write(p []byte) (int, error) {
-	free := w.limit - w.buf.Len()
-	if len(p) <= free {
-		return w.buf.Write(p)
+// done reports whether the collector has reached its limit.
+func (c *xmpTextCollector) done() bool {
+	return c.b.Len() >= c.limit
+}
+
+// leaf appends a text leaf, separating it from any previous leaf with a
+// newline.  Empty leaves and leaves collected after the limit are skipped.
+func (c *xmpTextCollector) leaf(s string) {
+	if s == "" || c.done() {
+		return
 	}
-	w.buf.Write(p[:free])
-	return free, errXMPTooLong
+	if c.b.Len() > 0 {
+		c.b.WriteByte('\n')
+	}
+	c.b.WriteString(s)
+}
+
+// walk visits r and, for RawStruct/RawArray, everything it contains,
+// appending every Text/URL leaf it finds via leaf.
+func (c *xmpTextCollector) walk(r xmp.Raw) {
+	if c.done() {
+		return
+	}
+	switch v := r.(type) {
+	case xmp.Text:
+		c.leaf(v.V)
+	case xmp.URL:
+		if v.V != nil {
+			c.leaf(v.V.String())
+		}
+	case xmp.RawStruct:
+		for _, name := range slices.SortedFunc(maps.Keys(v.Value), compareXMLName) {
+			if c.done() {
+				return
+			}
+			c.walk(v.Value[name])
+		}
+	case xmp.RawArray:
+		for _, item := range v.Value {
+			if c.done() {
+				return
+			}
+			c.walk(item)
+		}
+	}
 }
 
 // xmpTitle returns the dc:title property of an XMP packet, "" if unset.
 // The "x-default" entry of the language alternative is preferred; if
 // there is none, the language-tagged entries are tried in a
 // deterministic order.
+//
+// Packet.Get's error is deliberately ignored here: it populates every
+// field it can decode and only zeroes the ones that failed, joining the
+// per-property errors via errors.Join.  A single malformed property
+// elsewhere in the packet (a producer writing dc:date as a bare string
+// instead of the required ordered array, say) must not discard a
+// perfectly good dc:title.
 func xmpTitle(p *xmp.Packet) string {
 	var dc xmp.DublinCore
-	if err := p.Get(&dc); err != nil {
-		return ""
-	}
+	_ = p.Get(&dc)
 
 	if title := strings.TrimSpace(dc.Title.Best(language.Und)); title != "" {
 		return title

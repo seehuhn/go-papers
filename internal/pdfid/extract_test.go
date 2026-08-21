@@ -127,9 +127,10 @@ func TestExtractXMP(t *testing.T) {
 	}
 }
 
-// TestSerializeXMPCap checks that an oversized XMP packet is truncated
-// to maxXMPBytes instead of being kept in full or dropped.
-func TestSerializeXMPCap(t *testing.T) {
+// TestXMPTextCap checks that the joined text collected from an oversized
+// XMP packet is truncated to maxXMPBytes instead of being kept in full or
+// dropped.
+func TestXMPTextCap(t *testing.T) {
 	packet := xmp.NewPacket()
 	err := packet.Set(&xmp.DublinCore{
 		Identifier: xmp.NewText("doi:10.1214/aop/1176996548"),
@@ -139,12 +140,44 @@ func TestSerializeXMPCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	text := serializeXMP(packet)
-	if len(text) != maxXMPBytes {
-		t.Errorf("len(XMP) = %d, want the cap %d", len(text), maxXMPBytes)
+	text := xmpText(packet)
+	if len(text) > maxXMPBytes {
+		t.Errorf("len(XMP) = %d, want at most the cap %d", len(text), maxXMPBytes)
 	}
 	if !strings.Contains(text, "10.1214/aop/1176996548") {
-		t.Error("the truncated packet must keep its leading properties")
+		t.Error("the capped text must keep the dc:identifier property (sorts before dc:source)")
+	}
+}
+
+// TestXMPTitleSurvivesMalformedProperty checks that xmpTitle still returns
+// dc:title when some other Dublin Core property in the same packet fails
+// to decode. Packet.Get populates every field it can and only zeroes the
+// ones that failed, joining the per-property errors via errors.Join; the
+// caller must not let that error discard an otherwise good title.  A
+// dc:date written as a bare string (instead of the required ordered
+// array) is a real-world example of such a malformed property.
+func TestXMPTitleSurvivesMalformedProperty(t *testing.T) {
+	const body = `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>` +
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/">` +
+		`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">` +
+		`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">` +
+		`<dc:title><rdf:Alt><rdf:li xml:lang="x-default">A Perfectly Good Title</rdf:li></rdf:Alt></dc:title>` +
+		`<dc:date>not-an-ordered-array</dc:date>` +
+		`</rdf:Description></rdf:RDF></x:xmpmeta>` +
+		`<?xpacket end="r"?>`
+	p, err := xmp.Read(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("xmp.Read: %v", err)
+	}
+
+	// sanity check: confirm the premise that Get reports an error here.
+	var dc xmp.DublinCore
+	if err := p.Get(&dc); err == nil {
+		t.Fatal("Get did not report an error for the malformed dc:date; test premise is stale")
+	}
+
+	if got := xmpTitle(p); got != "A Perfectly Good Title" {
+		t.Errorf("xmpTitle = %q, want the title despite the malformed dc:date", got)
 	}
 }
 

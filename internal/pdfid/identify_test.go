@@ -18,7 +18,10 @@ package pdfid
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"seehuhn.de/go/xmp"
 
 	"seehuhn.de/go/paper/internal/pdfid/pdfidtest"
 )
@@ -114,8 +117,9 @@ func TestIdentifyScanned(t *testing.T) {
 }
 
 // TestIdentifyTier1XMPDOI checks the end-to-end path for a DOI which is
-// only present in the document's XMP metadata stream: the packet is
-// serialised by Extract and the tier-1 regex scan finds the DOI there.
+// only present in the document's XMP metadata stream: Extract collects
+// the packet's property text into DocText.XMP and the tier-1 regex scan
+// finds the DOI there.
 func TestIdentifyTier1XMPDOI(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "xmp.pdf")
 	packet := pdfidtest.DublinCorePacket(t, "doi:10.1080/01621459.1963.10500830", "")
@@ -129,6 +133,74 @@ func TestIdentifyTier1XMPDOI(t *testing.T) {
 	id := Identify(d, nil)
 	if id.Tier != 1 || id.DOI != "10.1080/01621459.1963.10500830" {
 		t.Errorf("id = %+v, want the DOI from the XMP packet at tier 1", id)
+	}
+}
+
+// TestIdentifyTier1XMPSICIDOI checks that a legacy Wiley/SICI DOI
+// containing '<' and '>' is no longer corrupted by the XMP path.
+//
+// Before this fix, serialising the packet back to XML and regex-scanning
+// that XML-escaped the angle brackets into "&lt;"/"&gt;" entity text.
+// doiRegex's [^\s"<>] character class does not exclude that entity text
+// (only the raw characters), so the match ran straight through it and
+// returned a WRONG, corrupted DOI - with the literal text "&lt;"/"&gt;"
+// embedded in it - and ok==true: silent bad data.
+//
+// Reading the property text directly (never serialised) removes that
+// corruption: doiRegex now sees the real '<' character and stops there,
+// same as it does for a SICI DOI in ordinary page text (see the
+// package-level "Out of scope" note - doiRegex's own <> exclusion is a
+// separate, ledgered issue this fix does not touch). So the DOI below is
+// truncated, exactly like tier 2's page-text path, but it is the correct
+// *prefix* of the real DOI, not a wrong string containing "&lt;"/"&gt;".
+func TestIdentifyTier1XMPSICIDOI(t *testing.T) {
+	const full = `10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4`
+	// doiRegex stops at the first literal '<', which is expected and
+	// unrelated to this fix (see doc comment above).
+	const wantTruncated = `10.1002/(SICI)1097-0258(19960229)15:4`
+
+	path := filepath.Join(t.TempDir(), "sici.pdf")
+	packet := pdfidtest.DublinCorePacket(t, "doi:"+full, "")
+	pdfidtest.MakePDF(t, path, "", "", []string{"body text without any identifier"}, nil,
+		pdfidtest.WithXMP(packet))
+
+	d, err := Extract(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(d.XMP, "&lt;") || strings.Contains(d.XMP, "&gt;") {
+		t.Errorf("XMP = %q, must contain the raw '<'/'>' characters, not XML entities", d.XMP)
+	}
+	id := Identify(d, nil)
+	if id.Tier != 1 || id.DOI != wantTruncated {
+		t.Errorf("id = %+v, want the uncorrupted (if truncated) DOI %q at tier 1", id, wantTruncated)
+	}
+}
+
+// TestIdentifyTier1XMPUnmodelledNamespace checks that a DOI stored in a
+// namespace this package has no typed model for (prism:doi, here) is
+// still found.  DocText.XMP is built by walking every property in the
+// packet, not by decoding known models, so it must reach namespaces
+// go-xmp's DublinCore/PDF/etc. structs never mention.
+func TestIdentifyTier1XMPUnmodelledNamespace(t *testing.T) {
+	const want = "10.1080/01621459.1963.10500830"
+
+	path := filepath.Join(t.TempDir(), "prism.pdf")
+	packet := xmp.NewPacket()
+	const prismNS = "http://prismstandard.org/namespaces/basic/2.0/"
+	if err := packet.SetValue(prismNS, "doi", xmp.NewText(want)); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	pdfidtest.MakePDF(t, path, "", "", []string{"body text without any identifier"}, nil,
+		pdfidtest.WithXMP(packet))
+
+	d, err := Extract(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := Identify(d, nil)
+	if id.Tier != 1 || id.DOI != want {
+		t.Errorf("id = %+v, want the DOI from the unmodelled prism:doi property at tier 1", id)
 	}
 }
 
