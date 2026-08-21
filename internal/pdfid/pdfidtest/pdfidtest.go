@@ -20,6 +20,10 @@ package pdfidtest
 import (
 	"testing"
 
+	"golang.org/x/text/language"
+
+	"seehuhn.de/go/xmp"
+
 	"seehuhn.de/go/pdf"
 	"seehuhn.de/go/pdf/document"
 	"seehuhn.de/go/pdf/font/gofont"
@@ -28,15 +32,57 @@ import (
 // defaultSize is the font size used for lines not covered by the sizes slice.
 const defaultSize = 10.0
 
+// Option modifies the PDF written by [MakePDF].
+type Option func(*pdf.WriterOptions)
+
+// WithXMP attaches p to the generated document as the document-level XMP
+// metadata stream.  The stream is written in plaintext, i.e. uncompressed,
+// which makes the packet visible to byte-scanning tools as well.
+func WithXMP(p *xmp.Packet) Option {
+	return func(opt *pdf.WriterOptions) {
+		opt.DocumentMetadata = &pdf.MetadataStream{Data: p, Plaintext: true}
+	}
+}
+
+// DublinCorePacket returns an XMP packet carrying the given dc:identifier
+// and dc:title (each omitted when empty).  The title is stored as the
+// "x-default" entry of the language alternative.
+func DublinCorePacket(t *testing.T, identifier, title string) *xmp.Packet {
+	t.Helper()
+
+	dc := &xmp.DublinCore{}
+	if identifier != "" {
+		dc.Identifier = xmp.NewText(identifier)
+	}
+	if title != "" {
+		dc.Title.Set(language.Und, title)
+	}
+
+	p := xmp.NewPacket()
+	if err := p.Set(dc); err != nil {
+		t.Fatalf("cannot set Dublin Core properties: %v", err)
+	}
+	return p
+}
+
 // MakePDF writes a single-page PDF with the given Info-dict title,
 // author, and body lines.  Lines are rendered top to bottom; sizes[i]
 // gives the font size of lines[i] (default 10 where sizes is short).
 // Empty title/author leave the Info entries unset; empty lines produce
-// a page with no text.
-func MakePDF(t *testing.T, path, title, author string, lines []string, sizes []float64) {
+// a page with no text.  Options, e.g. [WithXMP], add optional document
+// features.
+func MakePDF(t *testing.T, path, title, author string, lines []string, sizes []float64, opts ...Option) {
 	t.Helper()
 
-	doc, err := document.CreateSinglePage(path, document.A4, pdf.V2_0, nil)
+	var writerOpt *pdf.WriterOptions
+	if len(opts) > 0 {
+		writerOpt = &pdf.WriterOptions{}
+		for _, opt := range opts {
+			opt(writerOpt)
+		}
+	}
+
+	doc, err := document.CreateSinglePage(path, document.A4, pdf.V2_0, writerOpt)
 	if err != nil {
 		t.Fatalf("cannot create %s: %v", path, err)
 	}

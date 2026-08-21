@@ -6,6 +6,7 @@ require (
 	golang.org/x/text v0.41.0
 	seehuhn.de/go/pdf v0.7.4
 	seehuhn.de/go/postscript v0.7.4
+	seehuhn.de/go/xmp v0.7.4
 )
 
 require (
@@ -16,5 +17,4 @@ require (
 	seehuhn.de/go/icc v0.7.4 // indirect
 	seehuhn.de/go/membudget v0.7.4 // indirect
 	seehuhn.de/go/sfnt v0.7.4 // indirect
-	seehuhn.de/go/xmp v0.7.4 // indirect
 )

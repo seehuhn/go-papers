@@ -97,13 +97,14 @@ func allPagesEmpty(pages []string) bool {
 	return true
 }
 
-// tier1 looks for a DOI or arXiv stamp in the Info dictionary's Subject
-// and Keywords fields and in its non-standard entries (Custom), which is
-// where a "doi" entry often hides. The candidate strings are scanned in a
-// deterministic order (see tier1Values): all of them are checked for a
-// DOI first, then, only if no DOI was found anywhere, all of them are
-// checked for an arXiv stamp. Title is not scanned (per the task brief,
-// "Title unused here").
+// tier1 looks for a DOI or arXiv stamp in the document metadata: the
+// Info dictionary's Subject and Keywords fields, its non-standard
+// entries (Custom), where a "doi" entry often hides, and the XMP
+// metadata packet. The candidate strings are scanned in a deterministic
+// order (see tier1Values): all of them are checked for a DOI first,
+// then, only if no DOI was found anywhere, all of them are checked for
+// an arXiv stamp. Title is not scanned (per the task brief, "Title
+// unused here").
 func tier1(d *DocText) (ID, bool) {
 	values := tier1Values(d)
 	if len(values) == 0 {
@@ -123,9 +124,11 @@ func tier1(d *DocText) (ID, bool) {
 	return ID{}, false
 }
 
-// tier1Values collects the Info-dict-derived strings that tier 1 scans:
-// Subject and Keywords (each included only if set), followed by the
-// Custom map's values in sorted-by-key order (for determinism).
+// tier1Values collects the metadata strings that tier 1 scans: Subject
+// and Keywords (each included only if set), followed by the Custom map's
+// values in sorted-by-key order (for determinism), and finally the
+// serialised XMP packet. The XMP packet comes last so that an explicit
+// Info-dict entry wins over whatever a producer left in the packet.
 func tier1Values(d *DocText) []string {
 	var values []string
 	if d.Subject != "" {
@@ -136,6 +139,9 @@ func tier1Values(d *DocText) []string {
 	}
 	for _, k := range slices.Sorted(maps.Keys(d.Custom)) {
 		values = append(values, d.Custom[k])
+	}
+	if d.XMP != "" {
+		values = append(values, d.XMP)
 	}
 	return values
 }
@@ -164,12 +170,21 @@ func tier2(d *DocText) (ID, bool) {
 // guess is reported in ID.Title whenever one was attempted (even when the
 // search fails or scores too low), so that callers can show it in error
 // messages. A nil search skips tier 3 entirely.
+//
+// When the page text yields no usable guess - a scanned PDF, or a first
+// page whose lines are all too short - the document metadata is used as
+// the title source instead: first the Info dictionary's Title, then the
+// XMP dc:title. Such a guess passes through the same similarity gate as
+// a page-text guess.
 func tier3(d *DocText, search SearchFunc) ID {
 	if search == nil {
 		return ID{}
 	}
 
 	guess := titleGuess(d.TopLines, d.TopSizes)
+	if guess == "" {
+		guess = metadataTitle(d)
+	}
 	if guess == "" {
 		return ID{}
 	}
@@ -182,6 +197,16 @@ func tier3(d *DocText, search SearchFunc) ID {
 		return ID{DOI: doi, Title: guess, Tier: 3}
 	}
 	return ID{Title: guess}
+}
+
+// metadataTitle returns the tier-3 fallback title guess taken from the
+// document metadata: the Info dictionary's Title if set, otherwise the
+// XMP dc:title. It returns "" if neither is set.
+func metadataTitle(d *DocText) string {
+	if title := strings.TrimSpace(d.Title); title != "" {
+		return title
+	}
+	return strings.TrimSpace(d.XMPTitle)
 }
 
 // titleGuess picks the tier-3 title guess from topLines, which holds the

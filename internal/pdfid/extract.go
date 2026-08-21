@@ -19,12 +19,18 @@
 package pdfid
 
 import (
+	"bytes"
 	"cmp"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"slices"
 	"strings"
+
+	"golang.org/x/text/language"
+
+	"seehuhn.de/go/xmp"
 
 	"seehuhn.de/go/postscript/cid"
 	"seehuhn.de/go/postscript/type1/names"
@@ -52,7 +58,22 @@ type DocText struct {
 	// font size of TopLines[i].  The two slices always have equal length.
 	TopLines []string
 	TopSizes []float64
+	// XMP is the document-level XMP metadata packet serialised back to
+	// XML text, "" when the document has no metadata stream (or the
+	// packet could not be serialised).  It is scanned for identifiers
+	// with the same regexes as the other text.  The text is capped at
+	// maxXMPBytes.
+	XMP string
+	// XMPTitle is the dc:title property of the XMP packet, "" if unset.
+	// It is kept separately because a title cannot reliably be recovered
+	// from the serialised XML by pattern matching.
+	XMPTitle string
 }
+
+// maxXMPBytes caps the length of DocText.XMP.  Metadata packets are
+// occasionally huge (embedded thumbnails, edit histories); a megabyte is
+// far more than any identifier-bearing packet needs.
+const maxXMPBytes = 1 << 20
 
 // Extract opens the PDF at path and extracts the info dictionary and the
 // text of up to maxPages pages.  A file that is not a PDF, or is
@@ -75,6 +96,11 @@ func Extract(path string, maxPages int) (*DocText, error) {
 		if len(info.Custom) > 0 {
 			res.Custom = maps.Clone(info.Custom)
 		}
+	}
+
+	if md := r.GetMeta().Catalog.Metadata; md != nil && md.Data != nil {
+		res.XMP = serializeXMP(md.Data)
+		res.XMPTitle = xmpTitle(md.Data)
 	}
 
 	if maxPages <= 0 {
@@ -114,6 +140,65 @@ func Extract(path string, maxPages int) (*DocText, error) {
 		return nil, fmt.Errorf("cannot extract text from %s: %w", path, firstErr)
 	}
 	return res, nil
+}
+
+// serializeXMP renders an XMP packet back to XML text, truncated to
+// maxXMPBytes.  The text is only used for pattern matching, so a
+// truncated packet is still useful (properties past the cap are simply
+// not scanned) and a packet which cannot be serialised at all is
+// reported as "" rather than as an error.
+func serializeXMP(p *xmp.Packet) string {
+	w := &capWriter{limit: maxXMPBytes}
+	if err := p.Write(w, nil); err != nil && w.buf.Len() < w.limit {
+		// the write failed for a reason other than the size cap
+		return ""
+	}
+	// truncation can cut a multi-byte character in half
+	return strings.ToValidUTF8(w.buf.String(), "")
+}
+
+// errXMPTooLong is returned by capWriter once its limit is reached.
+var errXMPTooLong = errors.New("XMP packet exceeds size limit")
+
+// capWriter is an [io.Writer] which collects at most limit bytes and
+// then reports errXMPTooLong to stop the writer feeding it.
+type capWriter struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	free := w.limit - w.buf.Len()
+	if len(p) <= free {
+		return w.buf.Write(p)
+	}
+	w.buf.Write(p[:free])
+	return free, errXMPTooLong
+}
+
+// xmpTitle returns the dc:title property of an XMP packet, "" if unset.
+// The "x-default" entry of the language alternative is preferred; if
+// there is none, the language-tagged entries are tried in a
+// deterministic order.
+func xmpTitle(p *xmp.Packet) string {
+	var dc xmp.DublinCore
+	if err := p.Get(&dc); err != nil {
+		return ""
+	}
+
+	if title := strings.TrimSpace(dc.Title.Best(language.Und)); title != "" {
+		return title
+	}
+	tags := slices.Collect(maps.Keys(dc.Title.V))
+	slices.SortFunc(tags, func(a, b language.Tag) int {
+		return strings.Compare(a.String(), b.String())
+	})
+	for _, tag := range tags {
+		if title := strings.TrimSpace(dc.Title.V[tag].V); title != "" {
+			return title
+		}
+	}
+	return ""
 }
 
 // hasText reports whether any of the given page texts is non-empty.

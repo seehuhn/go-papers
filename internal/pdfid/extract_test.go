@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"seehuhn.de/go/xmp"
+
 	"seehuhn.de/go/paper/internal/pdfid/pdfidtest"
 )
 
@@ -103,5 +105,63 @@ func TestExtractNoText(t *testing.T) {
 	}
 	if d.Title != "" || d.Author != "" {
 		t.Errorf("info = %q / %q, want empty", d.Title, d.Author)
+	}
+}
+
+// TestExtractXMP checks that a document-level XMP packet is serialised
+// into DocText.XMP and that dc:title is picked out into DocText.XMPTitle.
+func TestExtractXMP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "xmp.pdf")
+	packet := pdfidtest.DublinCorePacket(t, "doi:10.1214/aop/1176996548", "A study of SPDEs in Greenland")
+	pdfidtest.MakePDF(t, path, "", "", []string{"body text"}, nil, pdfidtest.WithXMP(packet))
+
+	d, err := Extract(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(d.XMP, "10.1214/aop/1176996548") {
+		t.Errorf("XMP = %q, want it to contain the dc:identifier DOI", d.XMP)
+	}
+	if d.XMPTitle != "A study of SPDEs in Greenland" {
+		t.Errorf("XMPTitle = %q, want the dc:title text", d.XMPTitle)
+	}
+}
+
+// TestSerializeXMPCap checks that an oversized XMP packet is truncated
+// to maxXMPBytes instead of being kept in full or dropped.
+func TestSerializeXMPCap(t *testing.T) {
+	packet := xmp.NewPacket()
+	err := packet.Set(&xmp.DublinCore{
+		Identifier: xmp.NewText("doi:10.1214/aop/1176996548"),
+		Source:     xmp.NewText(strings.Repeat("x", 2*maxXMPBytes)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := serializeXMP(packet)
+	if len(text) != maxXMPBytes {
+		t.Errorf("len(XMP) = %d, want the cap %d", len(text), maxXMPBytes)
+	}
+	if !strings.Contains(text, "10.1214/aop/1176996548") {
+		t.Error("the truncated packet must keep its leading properties")
+	}
+}
+
+// TestExtractNoXMP checks that a PDF without a metadata stream leaves the
+// XMP fields empty rather than failing.
+func TestExtractNoXMP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plain.pdf")
+	pdfidtest.MakePDF(t, path, "Some title", "Some author", []string{"body text"}, nil)
+
+	d, err := Extract(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.XMP != "" || d.XMPTitle != "" {
+		t.Errorf("XMP = %q, XMPTitle = %q, want both empty", d.XMP, d.XMPTitle)
+	}
+	if d.Title != "Some title" {
+		t.Errorf("Title = %q, want the Info-dict title", d.Title)
 	}
 }
