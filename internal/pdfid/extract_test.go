@@ -43,6 +43,12 @@ func TestExtractInfoAndText(t *testing.T) {
 	if len(d.TopLines) == 0 || !strings.Contains(d.TopLines[0], "Probability inequalities") {
 		t.Errorf("TopLines = %q, largest-font line must come first", d.TopLines)
 	}
+	if len(d.TopSizes) != len(d.TopLines) {
+		t.Fatalf("TopSizes = %v, want same length as TopLines %q", d.TopSizes, d.TopLines)
+	}
+	if d.TopSizes[0] != 24 {
+		t.Errorf("TopSizes[0] = %v, want 24 (the largest font size)", d.TopSizes[0])
+	}
 }
 
 func TestExtractNotAPDF(t *testing.T) {
@@ -66,12 +72,21 @@ func TestExtractTopLinesOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"The real title", "Preprint, submitted", "small print"}
+	wantSizes := []float64{20, 9, 7}
 	if len(d.TopLines) != len(want) {
 		t.Fatalf("TopLines = %q, want %q", d.TopLines, want)
 	}
 	for i, w := range want {
 		if d.TopLines[i] != w {
 			t.Errorf("TopLines[%d] = %q, want %q", i, d.TopLines[i], w)
+		}
+	}
+	if len(d.TopSizes) != len(wantSizes) {
+		t.Fatalf("TopSizes = %v, want %v", d.TopSizes, wantSizes)
+	}
+	for i, w := range wantSizes {
+		if d.TopSizes[i] != w {
+			t.Errorf("TopSizes[%d] = %v, want %v", i, d.TopSizes[i], w)
 		}
 	}
 }

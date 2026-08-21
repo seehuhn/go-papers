@@ -97,31 +97,47 @@ func allPagesEmpty(pages []string) bool {
 	return true
 }
 
-// tier1 looks for a DOI or arXiv stamp in the Info dictionary's
-// non-standard entries (Custom). The PDF's standard Subject and Keywords
-// fields are natural homes for such identifiers, but DocText (as produced
-// by Extract) does not carry them as separate fields; Extract only ever
-// clones the Custom map, so any such value that survives extraction
-// arrives there. Custom's values are scanned in a deterministic (sorted
-// by key) order: all values are checked for a DOI first, then, only if
-// no DOI was found anywhere, all values are checked for an arXiv stamp.
+// tier1 looks for a DOI or arXiv stamp in the Info dictionary's Subject
+// and Keywords fields and in its non-standard entries (Custom), which is
+// where a "doi" entry often hides. The candidate strings are scanned in a
+// deterministic order (see tier1Values): all of them are checked for a
+// DOI first, then, only if no DOI was found anywhere, all of them are
+// checked for an arXiv stamp. Title is not scanned (per the task brief,
+// "Title unused here").
 func tier1(d *DocText) (ID, bool) {
-	if len(d.Custom) == 0 {
+	values := tier1Values(d)
+	if len(values) == 0 {
 		return ID{}, false
 	}
-	keys := slices.Sorted(maps.Keys(d.Custom))
 
-	for _, k := range keys {
-		if doi, ok := findDOI(d.Custom[k]); ok {
+	for _, v := range values {
+		if doi, ok := findDOI(v); ok {
 			return ID{DOI: doi, Tier: 1}, true
 		}
 	}
-	for _, k := range keys {
-		if id, version, ok := findArxiv(d.Custom[k]); ok {
+	for _, v := range values {
+		if id, version, ok := findArxiv(v); ok {
 			return ID{ArxivID: id, Version: version, Tier: 1}, true
 		}
 	}
 	return ID{}, false
+}
+
+// tier1Values collects the Info-dict-derived strings that tier 1 scans:
+// Subject and Keywords (each included only if set), followed by the
+// Custom map's values in sorted-by-key order (for determinism).
+func tier1Values(d *DocText) []string {
+	var values []string
+	if d.Subject != "" {
+		values = append(values, d.Subject)
+	}
+	if d.Keywords != "" {
+		values = append(values, d.Keywords)
+	}
+	for _, k := range slices.Sorted(maps.Keys(d.Custom)) {
+		values = append(values, d.Custom[k])
+	}
+	return values
 }
 
 // tier2 looks for a DOI or arXiv stamp in the extracted page text. All
@@ -153,7 +169,7 @@ func tier3(d *DocText, search SearchFunc) ID {
 		return ID{}
 	}
 
-	guess := titleGuess(d.TopLines)
+	guess := titleGuess(d.TopLines, d.TopSizes)
 	if guess == "" {
 		return ID{}
 	}
@@ -169,21 +185,40 @@ func tier3(d *DocText, search SearchFunc) ID {
 }
 
 // titleGuess picks the tier-3 title guess from topLines, which holds the
-// first page's lines ordered by descending font size (largest first).
+// first page's lines ordered by descending font size (largest first), and
+// topSizes, the parallel slice of font sizes (topSizes[i] is the font
+// size of topLines[i]; see DocText.TopSizes).
 //
-// The ideal rule (per the task brief) is to take the largest-font
-// heading, skipping lines too short to be a title (fewer than
-// tier3MinTokens tokens), and to join multiple consecutive lines that
-// belong to that same largest-font run into one guess. That last part
-// cannot be implemented faithfully here: DocText.TopLines is a []string
-// carrying only line text, not the font sizes used to sort it, so once a
-// line has been placed in the slice there is no way to tell whether the
-// next entry shares its font size or belongs to the next-largest run.
-// Reading the brief in the simplest way its actual inputs support: this
-// returns the first line with at least tier3MinTokens tokens verbatim,
-// without attempting to join it to any neighbouring line.
-func titleGuess(topLines []string) string {
-	for _, line := range topLines {
+// The leading run of topLines entries that share the largest font size
+// (topSizes[0]) is joined with spaces into one candidate, since a
+// wrapped title commonly spans two or more same-size lines. If that
+// candidate has at least tier3MinTokens tokens, it is the guess. If it is
+// too short (e.g. the largest-font run is just a running head or a
+// decorative mark), the remaining lines are checked individually, in
+// font-size order, and the first one with at least tier3MinTokens tokens
+// is returned.
+//
+// If topSizes does not have the same length as topLines - which callers
+// constructing a DocText by hand, such as tests, may leave unset - no
+// join is attempted and this degrades to considering topLines[0] alone,
+// then falling through line by line exactly as before TopSizes existed.
+func titleGuess(topLines []string, topSizes []float64) string {
+	if len(topLines) == 0 {
+		return ""
+	}
+
+	sameSize := len(topSizes) == len(topLines)
+	end := 1
+	for end < len(topLines) && sameSize && topSizes[end] == topSizes[0] {
+		end++
+	}
+
+	joined := strings.Join(topLines[:end], " ")
+	if len(match.Tokens(joined)) >= tier3MinTokens {
+		return joined
+	}
+
+	for _, line := range topLines[end:] {
 		if len(match.Tokens(line)) >= tier3MinTokens {
 			return line
 		}

@@ -74,6 +74,32 @@ func TestIdentifyTier3LowScoreRejected(t *testing.T) {
 	}
 }
 
+func TestIdentifyTier3JoinsSameSizeLines(t *testing.T) {
+	d := &DocText{
+		TopLines: []string{"A study of stochastic partial", "differential equations in Greenland", "Jochen Voss"},
+		TopSizes: []float64{20, 20, 12},
+	}
+	const want = "A study of stochastic partial differential equations in Greenland"
+	search := func(guess string) (string, string, float64, error) {
+		if guess != want {
+			t.Errorf("guess = %q, want the joined title %q", guess, want)
+		}
+		return "10.1234/greenland-spdes", want, 1.0, nil
+	}
+	id := Identify(d, search)
+	if id.Tier != 3 || id.Title != want {
+		t.Errorf("id = %+v", id)
+	}
+}
+
+func TestIdentifyTier1SubjectDOI(t *testing.T) {
+	d := &DocText{Subject: "doi:10.1214/aop/1176996548"}
+	id := Identify(d, nil)
+	if id.Tier != 1 || id.DOI != "10.1214/aop/1176996548" {
+		t.Errorf("id = %+v", id)
+	}
+}
+
 func TestIdentifyScanned(t *testing.T) {
 	d := &DocText{Pages: []string{"", ""}}
 	id := Identify(d, nil)

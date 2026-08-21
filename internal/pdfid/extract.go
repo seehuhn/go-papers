@@ -40,13 +40,18 @@ import (
 
 // DocText is the extraction result for identification purposes.
 type DocText struct {
-	Title  string            // Info dict Title, "" if unset
-	Author string            // Info dict Author
-	Custom map[string]string // non-standard Info entries (doi often hides here)
-	Pages  []string          // plain text of the first pages requested
+	Title    string            // Info dict Title, "" if unset
+	Author   string            // Info dict Author
+	Subject  string            // Info dict Subject, "" if unset
+	Keywords string            // Info dict Keywords, "" if unset
+	Custom   map[string]string // non-standard Info entries (doi often hides here)
+	Pages    []string          // plain text of the first pages requested
 	// TopLines holds the first page's text lines ordered by descending
 	// font size: the largest-font run(s) first.  Used for title guessing.
+	// TopSizes is the parallel slice of font sizes: TopSizes[i] is the
+	// font size of TopLines[i].  The two slices always have equal length.
 	TopLines []string
+	TopSizes []float64
 }
 
 // Extract opens the PDF at path and extracts the info dictionary and the
@@ -65,6 +70,8 @@ func Extract(path string, maxPages int) (*DocText, error) {
 	if info := r.GetMeta().Info; info != nil {
 		res.Title = string(info.Title)
 		res.Author = string(info.Author)
+		res.Subject = string(info.Subject)
+		res.Keywords = string(info.Keywords)
 		if len(info.Custom) > 0 {
 			res.Custom = maps.Clone(info.Custom)
 		}
@@ -91,7 +98,7 @@ func Extract(path string, maxPages int) (*DocText, error) {
 		}
 		res.Pages = append(res.Pages, e.text())
 		if first {
-			res.TopLines = e.topLines()
+			res.TopLines, res.TopSizes = e.topLines()
 		}
 
 		numPages++
@@ -243,19 +250,23 @@ func (e *extractor) text() string {
 }
 
 // topLines returns the lines of the page most recently processed, ordered
-// by descending font size.  Lines of equal size keep their original order.
-func (e *extractor) topLines() []string {
+// by descending font size, together with the font size of each line in
+// the parallel sizes slice (sizes[i] is the font size of lines[i]).
+// Lines of equal size keep their original order.
+func (e *extractor) topLines() (lines []string, sizes []float64) {
 	e.flushLine()
-	lines := slices.Clone(e.lines)
-	slices.SortStableFunc(lines, func(a, b sizedLine) int {
+	ls := slices.Clone(e.lines)
+	slices.SortStableFunc(ls, func(a, b sizedLine) int {
 		return cmp.Compare(b.size, a.size)
 	})
 
-	res := make([]string, len(lines))
-	for i, l := range lines {
-		res[i] = l.text
+	lines = make([]string, len(ls))
+	sizes = make([]float64, len(ls))
+	for i, l := range ls {
+		lines[i] = l.text
+		sizes[i] = l.size
 	}
-	return res
+	return lines, sizes
 }
 
 // writeSpace emits a space, collapsing it against any preceding whitespace.
