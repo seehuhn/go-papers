@@ -17,6 +17,9 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,5 +195,48 @@ func TestCheckCorruptEntryReportedOnce(t *testing.T) {
 	count := strings.Count(out, "cannot load entry")
 	if count != 1 {
 		t.Errorf(`"cannot load entry" appeared %d times, want exactly 1:%s%s`, count, "\n", out)
+	}
+}
+
+func TestCheckOnline(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PAPER_STORE", dir)
+	s, _ := store.Open("")
+	good := &store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Hoeffding, Wassily",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"journal": "JASA", "year": "1963", "pages": "13--30",
+			"doi": "10.1080/01621459.1963.10500830"}}}
+	bad := &store.Paper{Key: "phantom_2020", Status: "clean", Holdings: "none",
+		DOI: "10.9999/does.not.exist",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Phantom, Paul", "title": "Ghost paper", "journal": "Nowhere",
+			"year": "2020", "doi": "10.9999/does.not.exist"}}}
+	s.Save(good)
+	s.Save(bad)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "10.1080") {
+			io.WriteString(w, crossrefWorkResponse)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	overrideBases(t, srv.URL, "", "", "", "")
+
+	out := captureStdout(t, func() {
+		err := runCheck([]string{"-online"})
+		if err == nil {
+			t.Error("unresolvable DOI must make check fail")
+		}
+	})
+	if !strings.Contains(out, "phantom_2020") || !strings.Contains(out, "does not resolve") {
+		t.Errorf("output should flag the phantom DOI:\n%s", out)
+	}
+	if strings.Contains(out, "hoeffding_1963: error") {
+		t.Errorf("the good entry must not error:\n%s", out)
 	}
 }

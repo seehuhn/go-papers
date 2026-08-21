@@ -18,6 +18,9 @@ package main
 
 import (
 	"encoding/json/v2"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -159,5 +162,42 @@ func TestEndToEndWorkflow(t *testing.T) {
 	}
 	if strings.Count(stage5Out, "\n\n@") != 2 {
 		t.Errorf("stage 5: want exactly 2 blank-line separators between 3 entries:\n%s", stage5Out)
+	}
+
+	// Stage 6: "paper fetch arXiv:2412.05039v2" against local fixture
+	// servers resolves the preprint, downloads its PDF and tex source, and
+	// creates a draft entry; "paper search" then finds it with the
+	// "[preprint]" holdings flag - the full fetch -> store -> search loop
+	// in one process.
+	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "e-print") {
+			w.Write(gzipTarballBytes(t))
+			return
+		}
+		io.WriteString(w, "%PDF-1.4 arxiv pdf")
+	}))
+	t.Cleanup(pdfSrv.Close)
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseNoDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	overrideBases(t, "", arxivSrv.URL, "", "", "")
+	savedDL := arxivDownloadBase
+	arxivDownloadBase = pdfSrv.URL
+	t.Cleanup(func() { arxivDownloadBase = savedDL })
+
+	if err := runFetch([]string{"arXiv:2412.05039v2"}); err != nil {
+		t.Fatalf("stage 6: runFetch: %v", err)
+	}
+
+	var stage6Err error
+	stage6Out := captureStdout(t, func() {
+		stage6Err = runSearch([]string{"-holdings", "preprint", "Greenland"})
+	})
+	if stage6Err != nil {
+		t.Fatalf("stage 6: runSearch: %v\noutput:\n%s", stage6Err, stage6Out)
+	}
+	if !strings.Contains(stage6Out, "voss_2024") || !strings.Contains(stage6Out, "[preprint]") {
+		t.Errorf("stage 6: search should find the fetched arXiv entry with [preprint] holdings:\n%s", stage6Out)
 	}
 }

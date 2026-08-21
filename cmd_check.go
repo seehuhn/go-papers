@@ -20,11 +20,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"seehuhn.de/go/paper/internal/match"
+	"seehuhn.de/go/paper/internal/sources"
 	"seehuhn.de/go/paper/internal/store"
 )
 
@@ -51,6 +54,7 @@ type entryLoad struct {
 // was found.
 func runCheck(args []string) error {
 	fs, storeFlag := newFlagSet("check")
+	online := fs.Bool("online", false, "verify DOIs against Crossref")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -145,6 +149,28 @@ func runCheck(args []string) error {
 		}
 	}
 
+	if *online {
+		cfg, err := s.LoadConfig()
+		if err != nil {
+			return fmt.Errorf("check: %w", err)
+		}
+		// Built once per run, per the interface contract: every DOI lookup
+		// this run makes shares one client, one HTTP timeout, and the
+		// store's configured contact email (for Crossref's "polite pool").
+		client := &sources.Crossref{BaseURL: crossrefBase, Client: &http.Client{Timeout: apiTimeout}, Email: cfg.Email}
+		for _, r := range results {
+			if r.paper.DOI == "" {
+				continue
+			}
+			for _, prob := range checkOnline(client, r.dirKey, r.paper) {
+				problems = append(problems, prob)
+				if prob.Severity == "error" {
+					r.errors++
+				}
+			}
+		}
+	}
+
 	errorCount := 0
 	for _, prob := range problems {
 		fmt.Printf("%s: %s: %s\n", prob.Key, prob.Severity, prob.Msg)
@@ -174,6 +200,49 @@ func runCheck(args []string) error {
 		return fmt.Errorf("check: found %d error(s) among %d problem(s)", errorCount, len(problems))
 	}
 	return nil
+}
+
+// titleSimilarityThreshold is the minimum Jaccard similarity (see
+// match.TitleSimilarity) between a store entry's folded title and
+// Crossref's, below which -online reports a title-disagreement warning.
+const titleSimilarityThreshold = 0.8
+
+// checkOnline verifies one entry's DOI against Crossref, returning the
+// problems found. A DOI that Crossref reports as not found is severity
+// error: unlike a mismatched title or year, it means the DOI itself is
+// wrong - a typo or a hallucination - which is a genuine problem with the
+// entry, so it blocks draft->clean promotion and the exit code like any
+// other error. A title or year that disagrees with Crossref's record, and
+// any other lookup failure (Crossref down, a timeout, a 5xx), is only a
+// warning: Crossref being unreachable, slow to update, or simply wrong
+// must not fail every entry that has a DOI.
+func checkOnline(c *sources.Crossref, key string, p *store.Paper) []store.Problem {
+	work, err := c.Work(p.DOI)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return []store.Problem{{Key: key, Severity: "error",
+				Msg: "does not resolve at Crossref (HTTP 404): likely a typo or a hallucinated DOI"}}
+		}
+		return []store.Problem{{Key: key, Severity: "warning",
+			Msg: fmt.Sprintf("crossref lookup failed: %v", err)}}
+	}
+
+	var problems []store.Problem
+	if len(work.Titles) > 0 {
+		storeTitle := p.Bibtex.Fields["title"]
+		crossrefTitle := work.Titles[0]
+		if match.TitleSimilarity(storeTitle, crossrefTitle) < titleSimilarityThreshold {
+			problems = append(problems, store.Problem{Key: key, Severity: "warning",
+				Msg: fmt.Sprintf("title disagrees with Crossref: store has %q, Crossref has %q", storeTitle, crossrefTitle)})
+		}
+	}
+	if year := work.Published.Year(); year != 0 {
+		if storeYear := p.Bibtex.Fields["year"]; storeYear != "" && storeYear != fmt.Sprintf("%d", year) {
+			problems = append(problems, store.Problem{Key: key, Severity: "warning",
+				Msg: fmt.Sprintf("year disagrees with Crossref: store has %q, Crossref has %d", storeYear, year)})
+		}
+	}
+	return problems
 }
 
 // fsck checks store-wide invariants that CheckPaper cannot see because it
