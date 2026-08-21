@@ -41,6 +41,9 @@ func TestParseRef(t *testing.T) {
 		{"Hoeffding, Probability inequalities, 1963",
 			Ref{Kind: RefText, Text: "Hoeffding, Probability inequalities, 1963"}},
 		{"  10.1214/aop/1176996548  ", Ref{Kind: RefDOI, DOI: "10.1214/aop/1176996548"}},
+		{"DOI:10.1007/BF00535479", Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+		{"arxiv:2412.05039v2", Ref{Kind: RefArxiv, ArxivID: "2412.05039", Version: 2}},
+		{"ARXIV:2412.05039", Ref{Kind: RefArxiv, ArxivID: "2412.05039"}},
 	}
 	for _, c := range cases {
 		if got := ParseRef(c.in); got != c.want {

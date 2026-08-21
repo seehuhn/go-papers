@@ -75,8 +75,8 @@ func extractDOI(s string) string {
 		s = strings.TrimPrefix(s, "https://doi.org/")
 	} else if strings.HasPrefix(s, "http://dx.doi.org/") {
 		s = strings.TrimPrefix(s, "http://dx.doi.org/")
-	} else if strings.HasPrefix(s, "doi:") {
-		s = strings.TrimPrefix(s, "doi:")
+	} else if len(s) >= 4 && strings.EqualFold(s[:4], "doi:") {
+		s = s[4:]
 	}
 
 	s = strings.TrimSpace(s)
@@ -95,12 +95,18 @@ func extractArxiv(s string) Ref {
 	// Remove known arXiv prefixes
 	if strings.HasPrefix(s, "https://arxiv.org/abs/") {
 		s = strings.TrimPrefix(s, "https://arxiv.org/abs/")
+	} else if strings.HasPrefix(s, "http://arxiv.org/abs/") {
+		s = strings.TrimPrefix(s, "http://arxiv.org/abs/")
 	} else if strings.HasPrefix(s, "https://arxiv.org/pdf/") {
 		s = strings.TrimPrefix(s, "https://arxiv.org/pdf/")
 		// Remove trailing .pdf if present
 		s = strings.TrimSuffix(s, ".pdf")
-	} else if strings.HasPrefix(s, "arXiv:") {
-		s = strings.TrimPrefix(s, "arXiv:")
+	} else if strings.HasPrefix(s, "http://arxiv.org/pdf/") {
+		s = strings.TrimPrefix(s, "http://arxiv.org/pdf/")
+		// Remove trailing .pdf if present
+		s = strings.TrimSuffix(s, ".pdf")
+	} else if len(s) >= 6 && strings.EqualFold(s[:6], "arxiv:") {
+		s = s[6:]
 	}
 
 	s = strings.TrimSpace(s)
@@ -122,8 +128,6 @@ func extractArxiv(s string) Ref {
 	} else {
 		id = s
 	}
-
-	id = strings.TrimSpace(id)
 
 	// Validate arXiv pattern (new or old style)
 	if arxivNewPattern.MatchString(id) || arxivOldPattern.MatchString(id) {
