@@ -17,6 +17,8 @@
 package tex
 
 import (
+	"unicode"
+
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -48,8 +50,16 @@ var encodeLiteral = func() map[rune]string {
 	m := make(map[rune]string)
 	for macro, lit := range literalMacros {
 		r := []rune(lit)[0]
-		if prev, ok := m[r]; ok && len(prev) <= len(macro) {
-			continue // keep the shortest macro name
+		if prev, ok := m[r]; ok {
+			// Deterministic tie-break, independent of map iteration
+			// order: prefer the shorter macro name, and on a length
+			// tie prefer the lexicographically smaller one.
+			if len(macro) > len(prev) {
+				continue
+			}
+			if len(macro) == len(prev) && macro >= prev {
+				continue
+			}
 		}
 		m[r] = macro
 	}
@@ -69,32 +79,68 @@ var encodeLiteral = func() map[rune]string {
 func Encode(s string) string {
 	src := []rune(norm.NFD.String(s))
 	out := make([]rune, 0, len(src))
-	for _, r := range src {
-		switch r {
+	i := 0
+	n := len(src)
+	for i < n {
+		switch src[i] {
 		case '–': // en dash
 			out = append(out, '-', '-')
+			i++
 			continue
 		case '—': // em dash
 			out = append(out, '-', '-', '-')
+			i++
 			continue
 		}
-		if ac, ok := encodeAccent[r]; ok && len(out) > 0 {
-			base := out[len(out)-1]
-			out = out[:len(out)-1]
-			var macro string
-			if ac.letter {
-				macro = `{\` + string(ac.ch) + `{` + string(base) + `}}`
-			} else {
-				macro = `{\` + string(ac.ch) + string(base) + `}`
-			}
-			out = append(out, []rune(macro)...)
-			continue
+
+		// Gather the NFD cluster: a base rune plus every combining
+		// mark (category Mn) immediately following it. Clusters are
+		// encoded as a whole so that a base with two or more stacked
+		// marks - which no single accent macro can represent - is
+		// recognized and passed through rather than corrupted into
+		// malformed LaTeX.
+		j := i + 1
+		for j < n && unicode.Is(unicode.Mn, src[j]) {
+			j++
 		}
-		if macro, ok := encodeLiteral[r]; ok {
-			out = append(out, []rune(`{\`+macro+`}`)...)
-			continue
-		}
-		out = append(out, r)
+		out = append(out, encodeCluster(src[i:j])...)
+		i = j
 	}
 	return norm.NFC.String(string(out))
+}
+
+// encodeCluster encodes one NFD cluster (a base rune plus zero or more
+// trailing combining marks) as LaTeX. It never emits malformed LaTeX: a
+// cluster it cannot fully represent as a single accent or literal macro
+// is passed through unchanged (NFC-recomposed).
+func encodeCluster(cluster []rune) []rune {
+	// First, see whether the whole cluster composes into a single
+	// character with its own literal macro (e.g. a+U+030A -> å ->
+	// {\aa}). This must be checked before the single-mark accent case
+	// below, since some literal targets (å, Å) arise from NFD
+	// decomposition just like accented letters do.
+	composed := []rune(norm.NFC.String(string(cluster)))
+	if len(composed) == 1 {
+		if macro, ok := encodeLiteral[composed[0]]; ok {
+			return []rune(`{\` + macro + `}`)
+		}
+	}
+
+	// A base rune with exactly one combining mark that is a known TeX
+	// accent becomes an accent macro.
+	if len(cluster) == 2 {
+		if ac, ok := encodeAccent[cluster[1]]; ok {
+			base := cluster[0]
+			if ac.letter {
+				return []rune(`{\` + string(ac.ch) + `{` + string(base) + `}}`)
+			}
+			return []rune(`{\` + string(ac.ch) + string(base) + `}`)
+		}
+	}
+
+	// Anything else - a bare base rune, multiple stacked marks, an
+	// unrecognized mark, or a mark with no base - passes through
+	// unencoded, recomposed so it stays a normal precomposed
+	// character rather than dangling combining marks.
+	return composed
 }

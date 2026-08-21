@@ -33,6 +33,8 @@ func TestEncode(t *testing.T) {
 		{"São Paulo", `S{\~a}o Paulo`},               // tilde
 		{"Čech", `{\v{C}}ech`},                       // caron
 		{"Kołmogorov 数学", `Ko{\l}mogorov 数学`},        // unencodable passes through
+		{"ế", "ế"},                                   // stacked marks: passthrough, no corruption
+		{"Håkon Åström", `H{\aa}kon {\AA}str{\"o}m`}, // å/Å via NFD-decomposed ring above
 	}
 	for _, c := range cases {
 		if got := Encode(c.in); got != c.want {
@@ -43,7 +45,7 @@ func TestEncode(t *testing.T) {
 
 func TestEncodeDecodeAgree(t *testing.T) {
 	// Whatever Encode produces must Decode back to the original text.
-	for _, s := range []string{"Voß", "Erdős", "Schrödinger", "Lévy", "Čech", "Łukasiewicz"} {
+	for _, s := range []string{"Voß", "Erdős", "Schrödinger", "Lévy", "Čech", "Łukasiewicz", "Håkon"} {
 		enc := Encode(s)
 		dec, unknown := Decode(enc)
 		if len(unknown) > 0 {

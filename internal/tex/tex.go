@@ -20,7 +20,9 @@
 // Python `s6py.tex` module, extended to use combining-character accents
 // instead of a literal lookup table, to cover more literal macros, to
 // pass math-mode (`$...$`) content through unchanged, and to report
-// unrecognized macro names instead of silently discarding them.
+// unrecognized macro names instead of silently discarding them. The
+// package also provides Encode, a partial one-way conversion in the
+// opposite direction, from plain unicode text to bibtex-encoded LaTeX.
 package tex
 
 import (
