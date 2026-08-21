@@ -30,10 +30,16 @@ import (
 // Attach moves the file at srcPath into the directory of paper p, under
 // the given filename, and records the acquisition in p's metadata. It
 // refuses to overwrite an existing file at the destination. On any
-// failure, srcPath is left in place.
+// failure, srcPath is left in place: if the file has already been moved
+// into the paper directory but s.Save then fails (e.g. a concurrent
+// paper.json corruption or a directory in the way), Attach makes a
+// best-effort attempt to move the file back to srcPath before returning
+// the error, so a failed Attach never leaves an orphaned, unrecorded file
+// behind.
 //
-// The move is done with os.Rename where possible, falling back to a
-// copy-then-remove for moves across filesystem boundaries.
+// The move (and rollback, if needed) is done with os.Rename where
+// possible, falling back to a copy-then-remove for moves across
+// filesystem boundaries.
 func (s *Store) Attach(p *Paper, srcPath, filename, source string, now time.Time) error {
 	dstPath := filepath.Join(s.Dir(p.Key), filename)
 
@@ -62,6 +68,10 @@ func (s *Store) Attach(p *Paper, srcPath, filename, source string, now time.Time
 	p.AppendLog(now, "attach", filename+" from "+source)
 
 	if err := s.Save(p); err != nil {
+		if rbErr := moveFile(dstPath, srcPath); rbErr != nil {
+			return fmt.Errorf("attaching %s: %w (rollback also failed, %s left in place: %v)",
+				filename, err, dstPath, rbErr)
+		}
 		return fmt.Errorf("attaching %s: %w", filename, err)
 	}
 

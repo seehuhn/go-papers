@@ -92,6 +92,36 @@ func TestAttachRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestAttachRollsBackOnSaveFailure(t *testing.T) {
+	s, p := attachFixture(t)
+	src := filepath.Join(t.TempDir(), "download.pdf")
+	if err := os.WriteFile(src, []byte("%PDF-1.4 fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force s.Save to fail: replace paper.json with a directory, so that
+	// Save's rename of its temp file onto paper.json fails.
+	paperJSON := filepath.Join(s.Dir(p.Key), "paper.json")
+	if err := os.Remove(paperJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(paperJSON, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Attach(p, src, "published.pdf", "unpaywall", time.Now())
+	if err == nil {
+		t.Fatal("expected an error when Save fails")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("source file should be rolled back to %s: %v", src, err)
+	}
+	dst := filepath.Join(s.Dir(p.Key), "published.pdf")
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("destination file should not exist after rollback, got err=%v", err)
+	}
+}
+
 func TestRecomputeHoldings(t *testing.T) {
 	cases := []struct {
 		files []string
