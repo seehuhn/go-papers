@@ -10,8 +10,9 @@ go install seehuhn.de/go/paper@latest
 
 ## The store
 
-The store is a plain directory: one subdirectory per paper, named by its
-citation key, plus a config file and an inbox drop zone.
+The store is a plain directory, in a location of your choosing: one
+subdirectory per paper, named by its citation key, plus a config file and
+an inbox drop zone.
 
 ```
 ~/Papers/
@@ -33,11 +34,16 @@ stay navigable by a human without tooling.
 
 ### Store-root resolution
 
-Every command that touches the store resolves its root in this order:
+The store location is entirely user-configured; `paper` has no built-in
+default. Every command that touches the store resolves its root in this
+order:
 
 1. the `-store` flag, if given;
-2. the `PAPER_STORE` environment variable, if set;
-3. `~/Papers`.
+2. the `PAPER_STORE` environment variable, if set.
+
+If neither is set, the command fails with an error. The usual setup is to
+export `PAPER_STORE` in your shell profile, pointing at a directory that
+is synced between your machines (e.g. via syncthing).
 
 ## Commands
 

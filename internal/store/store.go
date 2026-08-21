@@ -35,37 +35,27 @@ type Store struct {
 }
 
 // Open resolves the store root and returns a Store backed by it. The root
-// is chosen from, in order of preference: flagValue (if non-empty), the
-// PAPER_STORE environment variable, and $HOME/Papers. Open fails if
-// the resolved directory does not exist.
+// is chosen from, in order of preference: flagValue (if non-empty) and the
+// PAPER_STORE environment variable. There is no built-in default; Open
+// fails if neither is set, or if the resolved directory does not exist.
 func Open(flagValue string) (*Store, error) {
 	envValue := os.Getenv("PAPER_STORE")
-
-	home, homeErr := os.UserHomeDir()
-	var defaultDir string
-	if homeErr == nil {
-		defaultDir = filepath.Join(home, "Papers")
-	}
 
 	root := flagValue
 	if root == "" {
 		root = envValue
 	}
-	if root == "" {
-		root = defaultDir
-	}
 
 	if root == "" {
 		return nil, fmt.Errorf(
-			"cannot resolve paper store: no --store flag given, PAPER_STORE is not set, and $HOME could not be determined (%v)",
-			homeErr)
+			"no paper store configured: give the -store flag or set the PAPER_STORE environment variable to the store directory")
 	}
 
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf(
-			"paper store directory %q does not exist (tried, in order: --store flag %q, PAPER_STORE=%q, default %q)",
-			root, flagValue, envValue, defaultDir)
+			"paper store directory %q does not exist (tried, in order: -store flag %q, PAPER_STORE=%q)",
+			root, flagValue, envValue)
 	}
 
 	return &Store{Root: root}, nil

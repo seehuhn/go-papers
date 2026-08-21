@@ -137,3 +137,14 @@ func TestOpenResolution(t *testing.T) {
 		t.Error("expected error for missing store dir")
 	}
 }
+
+func TestOpenUnconfigured(t *testing.T) {
+	t.Setenv("PAPER_STORE", "")
+	_, err := Open("")
+	if err == nil {
+		t.Fatal("expected error when no store is configured")
+	}
+	if !strings.Contains(err.Error(), "PAPER_STORE") {
+		t.Errorf("error %q should mention PAPER_STORE", err)
+	}
+}
