@@ -228,18 +228,8 @@ func (f *fetcher) fetchArxiv(ref sources.Ref) error {
 			return err
 		}
 
-		// Otherwise prefer the published metadata. A Crossref failure here
-		// is not fatal — the arXiv-only entry is still useful — but it must
-		// be visible in Pending.
-		if work, werr := f.crossref().Work(doi); werr != nil {
-			p.Pending = addPending(p.Pending, fmt.Sprintf(
-				"crossref lookup of %s failed (%v); published metadata is missing", doi, werr))
-		} else if published, perr := resolve.FromCrossref(work); perr != nil {
-			p.Pending = addPending(p.Pending, fmt.Sprintf(
-				"crossref record %s is unusable (%v); published metadata is missing", doi, perr))
-		} else {
-			p = resolve.Merge(published, entry)
-		}
+		// Otherwise prefer the published metadata.
+		p = mergePublished(f.crossref(), p, entry, doi)
 	}
 
 	af := newArxivFetch(entry, ref)
@@ -517,21 +507,9 @@ func yearString(year int) string {
 // fetch must stop; the second is the error to return in that case (nil
 // under -dry-run, where a duplicate is merely reported).
 func (f *fetcher) stopOnDuplicate(what, doi, arxivID string) (bool, error) {
-	papers, err := f.store.LoadAll()
+	key, err := findDuplicate(f.store, doi, arxivID)
 	if err != nil {
 		return true, fmt.Errorf("fetch: %w", err)
-	}
-
-	key := ""
-	for _, p := range papers {
-		if doi != "" && strings.EqualFold(p.DOI, doi) {
-			key = p.Key
-			break
-		}
-		if arxivID != "" && p.Arxiv != nil && p.Arxiv.ID == arxivID {
-			key = p.Key
-			break
-		}
 	}
 	if key == "" {
 		return false, nil
@@ -548,29 +526,17 @@ func (f *fetcher) stopOnDuplicate(what, doi, arxivID string) (bool, error) {
 // create picks a free key for the draft entry, records why it exists, and
 // writes it to the store.
 func (f *fetcher) create(p *store.Paper, detail string) error {
-	key, err := f.store.FreeKey(p.Key)
-	if err != nil {
+	if err := createDraft(f.store, p, f.now, "fetch", detail); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	p.Key = key
-	p.AppendLog(f.now, "fetch", detail)
-	if err := f.store.Save(p); err != nil {
-		return fmt.Errorf("fetch: %w", err)
-	}
-	fmt.Printf("created %s\n", p.Key)
 	return nil
 }
 
 // attachDownload downloads url into a temporary file and hands that file
-// to store.Attach, which moves it into the paper directory and records
-// it. On a failed Attach the in-memory paper is stale — mutated but not
-// saved — so it is discarded and reloaded from the store, and the
-// reloaded paper is returned instead.
-//
-// The returned paper is never nil, even when that reload fails too:
-// callers build their hand-off message from it, and its identity fields
-// (key, bibtex) survive a failed Attach untouched. Only a paper returned
-// alongside a nil error is safe to save.
+// to attachFile, which moves it into the paper directory and records it.
+// The stale-paper contract of attachFile applies here too: only a paper
+// returned alongside a nil error is safe to save, and the returned paper
+// is never nil.
 func (f *fetcher) attachDownload(p *store.Paper, url, filename, source string) (*store.Paper, error) {
 	tmpDir, err := os.MkdirTemp("", "paper-fetch-")
 	if err != nil {
@@ -583,14 +549,7 @@ func (f *fetcher) attachDownload(p *store.Paper, url, filename, source string) (
 		return p, err
 	}
 
-	if err := f.store.Attach(p, tmpPath, filename, source, f.now); err != nil {
-		reloaded, loadErr := f.store.Load(p.Key)
-		if loadErr != nil {
-			return p, fmt.Errorf("%w (reloading %s afterwards also failed: %v)", err, p.Key, loadErr)
-		}
-		return reloaded, err
-	}
-	return p, nil
+	return attachFile(f.store, p, tmpPath, filename, source, f.now)
 }
 
 // unpaywallRoute asks Unpaywall for a directly downloadable open-access
