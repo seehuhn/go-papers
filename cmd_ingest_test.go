@@ -45,8 +45,38 @@ func makeIngestPDF(t *testing.T, path, title, doi string) {
 	pdfidtest.MakePDF(t, path, title, "Test Author", lines, []float64{24, 10})
 }
 
+// guardBases points every online service at a server that fails the test
+// if it is contacted. A test whose files must resolve locally uses it, so
+// that reaching a live service is a failure by construction rather than
+// something the fixtures happen to avoid.
+func guardBases(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no online service may be contacted here: %s", r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL)
+}
+
+// assertUntouched checks that an entry gained nothing from a run that was
+// supposed to refuse the file: holdings unchanged, no version recorded.
+func assertUntouched(t *testing.T, s *store.Store, key string) {
+	t.Helper()
+	p, err := s.Load(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Holdings != "none" {
+		t.Errorf("holdings = %q, want the entry left untouched", p.Holdings)
+	}
+	if len(p.Versions) != 0 {
+		t.Errorf("versions = %v, want the entry left untouched", p.Versions)
+	}
+}
+
 func TestIngestSinceAndInto(t *testing.T) {
 	storeDir := fetchFixtureStore(t)
+	guardBases(t)
 	s, _ := store.Open("")
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
@@ -86,6 +116,7 @@ func TestIngestSinceAndInto(t *testing.T) {
 
 func TestIngestIntoNeedsExactlyOne(t *testing.T) {
 	fetchFixtureStore(t)
+	guardBases(t)
 	s, _ := store.Open("")
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -105,10 +136,12 @@ func TestIngestIntoNeedsExactlyOne(t *testing.T) {
 			t.Errorf("%s must be left in place", f)
 		}
 	}
+	assertUntouched(t, s, "hoeffding_1963")
 }
 
 func TestIngestIntoVerifiesIdentity(t *testing.T) {
 	fetchFixtureStore(t)
+	guardBases(t)
 	s, _ := store.Open("")
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
@@ -126,6 +159,7 @@ func TestIngestIntoVerifiesIdentity(t *testing.T) {
 	if _, statErr := os.Stat(f); statErr != nil {
 		t.Error("rejected file must be left in place")
 	}
+	assertUntouched(t, s, "hoeffding_1963")
 }
 
 func TestIngestBatchCreatesEntries(t *testing.T) {
@@ -158,7 +192,7 @@ func TestIngestBatchCreatesEntries(t *testing.T) {
 }
 
 func TestIngestDOIOverride(t *testing.T) {
-	fetchFixtureStore(t)
+	storeDir := fetchFixtureStore(t)
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
@@ -175,10 +209,17 @@ func TestIngestDOIOverride(t *testing.T) {
 	if _, err := s.Load("hoeffding_1963"); err != nil {
 		t.Error("entry should have been created from the override DOI")
 	}
+	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
+		t.Error("file should have been moved into the store")
+	}
+	if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
+		t.Error("source file must be moved away")
+	}
 }
 
 func TestIngestUnidentifiable(t *testing.T) {
 	fetchFixtureStore(t)
+	guardBases(t)
 	f := filepath.Join(t.TempDir(), "scan.pdf")
 	makeIngestPDF(t, f, "", "")
 
@@ -193,6 +234,53 @@ func TestIngestUnidentifiable(t *testing.T) {
 	keys, _ := s.Keys()
 	if len(keys) != 0 {
 		t.Errorf("no entry may be created, found %v", keys)
+	}
+}
+
+// TestIngestBatchPartialFailure pins the partial-failure semantics of a
+// batch run: one file that cannot be identified does not stop the others,
+// the successes are reported on stdout as they happen, and the closing
+// error accounts for every file that was left behind.
+func TestIngestBatchPartialFailure(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefWorkResponse)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "scan.pdf")
+	good := filepath.Join(dir, "paper.pdf")
+	makeIngestPDF(t, bad, "", "") // no text, unidentifiable
+	makeIngestPDF(t, good, "Probability inequalities", "10.1080/01621459.1963.10500830")
+
+	// The unidentifiable file comes first, so the run has to carry on past
+	// a failure to reach the good one.
+	var err error
+	out := captureStdout(t, func() { err = runIngest([]string{bad, good}) })
+
+	if err == nil || !strings.Contains(err.Error(), "1 of 2") || !strings.Contains(err.Error(), bad) {
+		t.Errorf("the closing error must account for the file left behind, got %v", err)
+	}
+	if !strings.Contains(out, "ingested "+good) {
+		t.Errorf("the successful file must be reported on stdout, got:\n%s", out)
+	}
+
+	s, _ := store.Open("")
+	if _, loadErr := s.Load("hoeffding_1963"); loadErr != nil {
+		t.Errorf("the identifiable file must still have been ingested: %v", loadErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); statErr != nil {
+		t.Error("the identifiable file should have been moved into the store")
+	}
+	if _, statErr := os.Stat(good); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("the ingested file must be moved away")
+	}
+	if _, statErr := os.Stat(bad); statErr != nil {
+		t.Error("the unidentified file must be left in place")
+	}
+	if keys, _ := s.Keys(); len(keys) != 1 {
+		t.Errorf("only the identifiable file may create an entry, found %v", keys)
 	}
 }
 
