@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/sources"
@@ -91,7 +90,7 @@ func FromCrossref(w *sources.CrossrefWork) (*store.Paper, error) {
 
 	fields := map[string]string{
 		"author": authorField,
-		"title":  braceCrossrefTitle(w.Titles[0]),
+		"title":  bibtex.BraceTitle(tex.Encode(w.Titles[0])),
 		"year":   yearStr,
 	}
 	if len(w.ContainerTitle) > 0 && w.ContainerTitle[0] != "" {
@@ -194,34 +193,6 @@ func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 	m.Abstract = e.Abstract
 
 	return &m
-}
-
-// braceCrossrefTitle builds the draft "title" field for a Crossref work.
-// Crossref serves titles in Title Case, where every significant word is
-// capitalized regardless of whether it is a proper noun. bibtex styles
-// down-case titles outside the first word, so left alone this would
-// silently lose the capitalization of genuine proper nouns. Since there
-// is no way to tell, from the Title-Case string alone, which capitals
-// are meaningful, every mid-title capitalized word is brace-protected
-// (in addition to bibtex.BraceTitle's usual protection for
-// multi-capital words such as "SPDEs"). This over-protects: a later
-// pass (tracked via Pending) downgrades braces on words that turn out
-// not to be proper nouns. Over-protecting is safe; under-protecting is
-// not.
-func braceCrossrefTitle(title string) string {
-	words := strings.Split(tex.Encode(title), " ")
-	for i, w := range words {
-		if i == 0 || w == "" {
-			continue
-		}
-		if strings.HasPrefix(w, "{") || strings.HasPrefix(w, "$") {
-			continue // already protected, or opens a math run
-		}
-		if unicode.IsUpper([]rune(w)[0]) {
-			words[i] = "{" + w + "}"
-		}
-	}
-	return bibtex.BraceTitle(strings.Join(words, " "))
 }
 
 // arxivEprint formats an arXiv ID with its version suffix, e.g.

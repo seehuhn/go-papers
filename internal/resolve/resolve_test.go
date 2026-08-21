@@ -48,7 +48,7 @@ func TestFromCrossref(t *testing.T) {
 	f := p.Bibtex.Fields
 	want := map[string]string{
 		"author":  "Hoeffding, Wassily",
-		"title":   "Probability {Inequalities} for {Sums} of {Bounded} {Random} {Variables}",
+		"title":   "Probability Inequalities for Sums of Bounded Random Variables",
 		"journal": "Journal of the American Statistical Association",
 		"volume":  "58", "number": "301", "pages": "13--30", "year": "1963",
 		"doi": "10.1080/01621459.1963.10500830",
