@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -204,25 +205,40 @@ func (in *ingester) ingestInto(key string, files []ingestFile) error {
 	}
 	f := files[0]
 
+	tier, err := in.ingestIntoOne(key, f)
+	in.store.LogEvent(store.Event{
+		Command: "ingest",
+		Input:   "file",
+		Ref:     filepath.Base(f.path),
+		Tier:    tier,
+		Outcome: eventOutcome(err),
+	})
+	return err
+}
+
+// ingestIntoOne does the actual work of ingestInto for the single
+// surviving file; kept separate so ingestInto can log exactly one event
+// per invocation regardless of the outcome.
+func (in *ingester) ingestIntoOne(key string, f ingestFile) (int, error) {
 	p, err := in.store.Load(key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	doc, id, err := in.identify(f.path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	filename, ok := verifyInto(p, doc, id)
 	if !ok {
-		return intoMismatchError(p, f, doc, id)
+		return id.Tier, intoMismatchError(p, f, doc, id)
 	}
 	if _, err := attachFile(in.store, p, f.path, filename, ingestSource, in.now); err != nil {
-		return err
+		return id.Tier, err
 	}
 	fmt.Printf("ingested %s -> %s\n", f.path, p.Key)
-	return nil
+	return id.Tier, nil
 }
 
 // verifyInto checks a file against the entry it is to be attached to and,
@@ -269,7 +285,14 @@ func pdfTitle(doc *pdfid.DocText, id pdfid.ID) string {
 func (in *ingester) ingestBatch(files []ingestFile, doiOverride, arxivOverride string) error {
 	var failures []ingestFailure
 	for _, f := range files {
-		key, err := in.ingestOne(f, doiOverride, arxivOverride)
+		key, tier, err := in.ingestOne(f, doiOverride, arxivOverride)
+		in.store.LogEvent(store.Event{
+			Command: "ingest",
+			Input:   "file",
+			Ref:     filepath.Base(f.path),
+			Tier:    tier,
+			Outcome: eventOutcome(err),
+		})
 		if err != nil {
 			failures = append(failures, ingestFailure{path: f.path, err: err})
 			continue
@@ -292,34 +315,38 @@ type ingestFailure struct {
 // creates the entry the file is attached to. The overrides implement
 // behavior branch 4: when the caller has already worked out what the file
 // is, identification is skipped entirely.
-func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (string, error) {
+func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (string, int, error) {
 	switch {
 	case doiOverride != "":
 		ref := sources.ParseRef(doiOverride)
 		if ref.Kind != sources.RefDOI {
-			return "", fmt.Errorf("-doi %q is not a DOI", doiOverride)
+			return "", 0, fmt.Errorf("-doi %q is not a DOI", doiOverride)
 		}
-		return in.ingestDOI(f, trimDOI(ref.DOI))
+		key, err := in.ingestDOI(f, trimDOI(ref.DOI))
+		return key, 0, err
 
 	case arxivOverride != "":
 		ref := sources.ParseRef(arxivOverride)
 		if ref.Kind != sources.RefArxiv {
-			return "", fmt.Errorf("-arxiv %q is not an arXiv ID", arxivOverride)
+			return "", 0, fmt.Errorf("-arxiv %q is not an arXiv ID", arxivOverride)
 		}
-		return in.ingestArxiv(f, ref.ArxivID, ref.Version)
+		key, err := in.ingestArxiv(f, ref.ArxivID, ref.Version)
+		return key, 0, err
 	}
 
 	doc, id, err := in.identify(f.path)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	switch {
 	case id.DOI != "":
-		return in.ingestDOI(f, id.DOI)
+		key, err := in.ingestDOI(f, id.DOI)
+		return key, id.Tier, err
 	case id.ArxivID != "":
-		return in.ingestArxiv(f, id.ArxivID, id.Version)
+		key, err := in.ingestArxiv(f, id.ArxivID, id.Version)
+		return key, id.Tier, err
 	default:
-		return "", unidentifiedError(doc, id)
+		return "", id.Tier, unidentifiedError(doc, id)
 	}
 }
 
@@ -430,8 +457,8 @@ func (in *ingester) createAndAttach(f ingestFile, p *store.Paper, filename, deta
 
 // duplicateError reports a file whose paper is already in the store.
 func duplicateError(what, key string) error {
-	return fmt.Errorf("%s is already in the store as %s; use paper search %s to inspect it, "+
-		"or paper ingest -into %s to attach this file to it", what, key, key, key)
+	return wrapOutcome("duplicate", fmt.Errorf("%s is already in the store as %s; use paper search %s to inspect it, "+
+		"or paper ingest -into %s to attach this file to it", what, key, key, key))
 }
 
 // intoCountError reports that -into did not get the single file it needs,
@@ -476,7 +503,7 @@ func intoMismatchError(p *store.Paper, f ingestFile, doc *pdfid.DocText, id pdfi
 
 	b.WriteString("\nIf this really is the paper, record the file by hand in " +
 		p.Key + "'s paper.json; otherwise ingest it without -into.")
-	return errors.New(b.String())
+	return wrapOutcome("mismatch", errors.New(b.String()))
 }
 
 // unidentifiedError reports a file that none of the identification tiers
@@ -491,7 +518,7 @@ func unidentifiedError(doc *pdfid.DocText, id pdfid.ID) error {
 	b.WriteString("\nFind the paper's DOI or arXiv ID, then re-run:\n")
 	b.WriteString("  paper ingest -doi <doi> <file>\n")
 	b.WriteString("  paper ingest -arxiv <id> <file>")
-	return errors.New(b.String())
+	return wrapOutcome("unidentified", errors.New(b.String()))
 }
 
 // describePDF writes what identification learned about a file: the Info

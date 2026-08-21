@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"seehuhn.de/go/paper/internal/match"
 	"seehuhn.de/go/paper/internal/sources"
@@ -52,7 +53,7 @@ type entryLoad struct {
 // line per problem found, and promotes any draft entry that turns out
 // to be clean. It returns a non-nil error if any error-severity problem
 // was found.
-func runCheck(args []string) error {
+func runCheck(args []string) (err error) {
 	fs, storeFlag := newFlagSet("check")
 	online := fs.Bool("online", false, "verify DOIs against Crossref")
 	if err := fs.Parse(args); err != nil {
@@ -65,6 +66,17 @@ func runCheck(args []string) error {
 	s, err := store.Open(*storeFlag)
 	if err != nil {
 		return fmt.Errorf("check: %w", err)
+	}
+
+	if *online {
+		start := time.Now()
+		defer func() {
+			s.LogEvent(store.Event{
+				Command:  "check",
+				Outcome:  eventOutcome(err),
+				Duration: time.Since(start).Milliseconds(),
+			})
+		}()
 	}
 
 	keys := fs.Args()

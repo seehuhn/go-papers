@@ -642,3 +642,23 @@ func TestFetchDryRun(t *testing.T) {
 		t.Errorf("dry run must not write to the store, found %v (%v)", entries, err)
 	}
 }
+
+func TestFetchLogsEvent(t *testing.T) {
+	dir := fetchFixtureStore(t)
+	s, _ := store.Open("")
+	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Hoeffding, Wassily", "title": "T", "journal": "J", "year": "1963"}}})
+
+	_ = runFetch([]string{"10.1080/01621459.1963.10500830"}) // duplicate -> error, still logged
+
+	files, _ := filepath.Glob(filepath.Join(dir, "events", "*.jsonl"))
+	if len(files) != 1 {
+		t.Fatalf("want one events file, got %v", files)
+	}
+	data, _ := os.ReadFile(files[0])
+	if !strings.Contains(string(data), `"outcome":"duplicate"`) {
+		t.Errorf("events file should record the duplicate outcome:\n%s", data)
+	}
+}

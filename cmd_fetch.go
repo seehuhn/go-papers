@@ -74,7 +74,7 @@ const scoreMargin = 1.3
 // but the command fails with everything it has learned about the paper.
 // That split — entry persisted, nonzero exit, rich message — is the
 // contract with the calling agent, which takes the hunt from there.
-func runFetch(args []string) error {
+func runFetch(args []string) (err error) {
 	fs, storeFlag := newFlagSet("fetch")
 	dryRun := fs.Bool("dry-run", false, "resolve and report, without writing to the store or downloading")
 	if err := fs.Parse(args); err != nil {
@@ -110,6 +110,23 @@ func runFetch(args []string) error {
 	}
 
 	ref := sources.ParseRef(refStr)
+
+	// -dry-run makes no store writes, and the events directory is a store
+	// write, so a dry run is not logged.
+	if !*dryRun {
+		start := time.Now()
+		defer func() {
+			s.LogEvent(store.Event{
+				Command:  "fetch",
+				Input:    refKindInput(ref.Kind),
+				Ref:      strings.TrimSpace(refStr),
+				Outcome:  eventOutcome(err),
+				Source:   refKindSource(ref.Kind),
+				Duration: time.Since(start).Milliseconds(),
+			})
+		}()
+	}
+
 	switch ref.Kind {
 	case sources.RefDOI:
 		return f.fetchDOI(trimDOI(ref.DOI))
@@ -118,6 +135,27 @@ func runFetch(args []string) error {
 	default:
 		return f.fetchText(ref.Text)
 	}
+}
+
+// refKindInput reports the Event.Input value for a parsed reference kind.
+func refKindInput(kind sources.RefKind) string {
+	switch kind {
+	case sources.RefDOI:
+		return "doi"
+	case sources.RefArxiv:
+		return "arxiv"
+	default:
+		return "text"
+	}
+}
+
+// refKindSource reports the metadata service a reference kind is resolved
+// through, for the event log's Source field.
+func refKindSource(kind sources.RefKind) string {
+	if kind == sources.RefArxiv {
+		return "arxiv"
+	}
+	return "crossref"
 }
 
 // fetcher carries the state shared by the three resolution branches.
@@ -443,7 +481,7 @@ func (f *fetcher) ambiguousError(query string, hits []*sources.CrossrefWork) err
 	fmt.Fprintf(&b, "  paper fetch %s\n", exampleDOI(candidates))
 	b.WriteString("  paper fetch arXiv:2412.05039\n")
 	b.WriteString("If none of these is right, search the open web for the paper's DOI or arXiv ID first.")
-	return errors.New(b.String())
+	return wrapOutcome("ambiguous", errors.New(b.String()))
 }
 
 // exampleDOI picks a DOI to show in the re-run instructions: the first
@@ -519,8 +557,8 @@ func (f *fetcher) stopOnDuplicate(what, doi, arxivID string) (bool, error) {
 		fmt.Printf("%s is already in the store as %s; nothing would be created\n", what, key)
 		return true, nil
 	}
-	return true, fmt.Errorf("fetch: %s is already in the store as %s; use paper search %s to inspect it",
-		what, key, key)
+	return true, wrapOutcome("duplicate", fmt.Errorf(
+		"fetch: %s is already in the store as %s; use paper search %s to inspect it", what, key, key))
 }
 
 // create picks a free key for the draft entry, records why it exists, and
@@ -608,7 +646,7 @@ func (f *fetcher) noOARouteError(p *store.Paper, work *sources.CrossrefWork, ver
 		"and record it under \"versions\" in %s.",
 		filepath.Join(f.store.Dir(p.Key), "published.pdf"),
 		filepath.Join(f.store.Dir(p.Key), "paper.json"))
-	return errors.New(b.String())
+	return wrapOutcome("no-oa-route", errors.New(b.String()))
 }
 
 // arxivStage names which half of an arXiv fetch failed.
@@ -661,7 +699,7 @@ func (f *fetcher) arxivFallbackError(p *store.Paper, af *arxivFetch, stage arxiv
 
 	fmt.Fprintf(&b, "\nFetch it by hand from %s, put it at %s,\nand record it under \"versions\" in %s.",
 		source, target, filepath.Join(f.store.Dir(p.Key), "paper.json"))
-	return errors.New(b.String())
+	return wrapOutcome("no-oa-route", errors.New(b.String()))
 }
 
 // plannedDownload is one file or directory that a real run would fetch.

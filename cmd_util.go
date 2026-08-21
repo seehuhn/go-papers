@@ -17,6 +17,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -89,6 +90,39 @@ func attachFile(s *store.Store, p *store.Paper, srcPath, filename, source string
 		return reloaded, err
 	}
 	return p, nil
+}
+
+// outcomeError tags an error, returned from one of a command's outcome
+// branches, with the event-log outcome it corresponds to ("no-oa-route",
+// "ambiguous", "duplicate", "unidentified", "mismatch", ...), so that a
+// deferred logger at the top of the command can classify the run without
+// inspecting message text. It wraps the original error, which Unwrap
+// still exposes.
+type outcomeError struct {
+	outcome string
+	err     error
+}
+
+func (e *outcomeError) Error() string { return e.err.Error() }
+func (e *outcomeError) Unwrap() error { return e.err }
+
+// wrapOutcome tags err with the given event-log outcome.
+func wrapOutcome(outcome string, err error) error {
+	return &outcomeError{outcome: outcome, err: err}
+}
+
+// eventOutcome classifies err for the event log: "ok" for a nil error,
+// the tagged outcome for an error made with wrapOutcome, and "error" for
+// anything else.
+func eventOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	var oe *outcomeError
+	if errors.As(err, &oe) {
+		return oe.outcome
+	}
+	return "error"
 }
 
 // mergePublished overlays the published Crossref record named by an arXiv
