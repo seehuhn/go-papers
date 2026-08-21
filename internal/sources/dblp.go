@@ -18,6 +18,7 @@ package sources
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -63,25 +64,61 @@ func (l *dblpAuthorList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// dblpVenue decodes a DBLP "venue" member. DBLP normally serializes this as
+// a bare string, but cross-listed venues are sometimes serialized as an
+// array of strings; the first entry is used in that case. An unrecognized
+// shape, or a decode error in either branch, is tolerated as an empty
+// string rather than causing an error.
+type dblpVenue string
+
+func (v *dblpVenue) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	switch {
+	case len(data) == 0, string(data) == "null":
+		*v = ""
+	case data[0] == '[':
+		var arr []string
+		if err := json.Unmarshal(data, &arr); err != nil || len(arr) == 0 {
+			*v = ""
+			return nil
+		}
+		*v = dblpVenue(arr[0])
+	case data[0] == '"':
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			*v = ""
+			return nil
+		}
+		*v = dblpVenue(s)
+	default:
+		*v = ""
+	}
+	return nil
+}
+
 // dblpSearchResult is the envelope returned by the DBLP publication search
-// API. Only the fields needed to build a Candidate are parsed; all others
-// are ignored.
+// API. Each hit is kept as raw JSON so that one malformed hit cannot abort
+// the decode of the whole response; see Search.
 type dblpSearchResult struct {
 	Result struct {
 		Hits struct {
-			Hit []struct {
-				Info struct {
-					Title   string `json:"title"`
-					Venue   string `json:"venue"`
-					Year    string `json:"year"`
-					DOI     string `json:"doi"`
-					Authors struct {
-						Author dblpAuthorList `json:"author"`
-					} `json:"authors"`
-				} `json:"info"`
-			} `json:"hit"`
+			Hit []jsontext.Value `json:"hit"`
 		} `json:"hits"`
 	} `json:"result"`
+}
+
+// dblpHit is the metadata for one DBLP search hit. Only the fields needed
+// to build a Candidate are parsed; all others are ignored.
+type dblpHit struct {
+	Info struct {
+		Title   string    `json:"title"`
+		Venue   dblpVenue `json:"venue"`
+		Year    string    `json:"year"`
+		DOI     string    `json:"doi"`
+		Authors struct {
+			Author dblpAuthorList `json:"author"`
+		} `json:"authors"`
+	} `json:"info"`
 }
 
 // DBLP is a client for the DBLP publication search API
@@ -116,17 +153,26 @@ func (d *DBLP) Search(query string, limit int) ([]Candidate, error) {
 		return nil, fmt.Errorf("dblp: searching %q: %w", query, err)
 	}
 
-	items := res.Result.Hits.Hit
-	if len(items) > limit {
-		items = items[:limit]
+	if limit < 0 {
+		limit = 0
+	}
+	raw := res.Result.Hits.Hit
+	if len(raw) > limit {
+		raw = raw[:limit]
 	}
 
-	hits := make([]Candidate, 0, len(items))
-	for _, item := range items {
+	hits := make([]Candidate, 0, len(raw))
+	for _, r := range raw {
+		var item dblpHit
+		if err := json.Unmarshal(r, &item); err != nil {
+			// One malformed hit must not sink the rest of the response.
+			continue
+		}
+
 		c := Candidate{
 			Source: "dblp",
 			Title:  item.Info.Title,
-			Venue:  item.Info.Venue,
+			Venue:  string(item.Info.Venue),
 			DOI:    item.Info.DOI,
 		}
 		c.Year, _ = strconv.Atoi(item.Info.Year)

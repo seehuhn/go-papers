@@ -17,6 +17,8 @@
 package sources
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,29 +26,33 @@ import (
 )
 
 // zbmathSearchResult is the envelope returned by the zbMATH Open REST API
-// search endpoint. Only the fields needed to build a Candidate are parsed;
-// all others are ignored.
+// search endpoint. Each result item is kept as raw JSON so that one
+// malformed hit cannot abort the decode of the whole response; see Search.
 type zbmathSearchResult struct {
-	Result []struct {
-		Title struct {
+	Result []jsontext.Value `json:"result"`
+}
+
+// zbmathHit is the metadata for one zbMATH search hit. Only the fields
+// needed to build a Candidate are parsed; all others are ignored.
+type zbmathHit struct {
+	Title struct {
+		Title string `json:"title"`
+	} `json:"title"`
+	Contributors struct {
+		Authors []struct {
+			Name string `json:"name"`
+		} `json:"authors"`
+	} `json:"contributors"`
+	Source struct {
+		Series []struct {
 			Title string `json:"title"`
-		} `json:"title"`
-		Contributors struct {
-			Authors []struct {
-				Name string `json:"name"`
-			} `json:"authors"`
-		} `json:"contributors"`
-		Source struct {
-			Series []struct {
-				Title string `json:"title"`
-			} `json:"series"`
-		} `json:"source"`
-		Year  int `json:"year"`
-		Links []struct {
-			Type       string `json:"type"`
-			Identifier string `json:"identifier"`
-		} `json:"links"`
-	} `json:"result"`
+		} `json:"series"`
+	} `json:"source"`
+	Year  int `json:"year"`
+	Links []struct {
+		Type       string `json:"type"`
+		Identifier string `json:"identifier"`
+	} `json:"links"`
 }
 
 // ZbMath is a client for the zbMATH Open REST API
@@ -78,13 +84,22 @@ func (z *ZbMath) Search(query string, limit int) ([]Candidate, error) {
 		return nil, fmt.Errorf("zbmath: searching %q: %w", query, err)
 	}
 
-	items := res.Result
-	if len(items) > limit {
-		items = items[:limit]
+	if limit < 0 {
+		limit = 0
+	}
+	raw := res.Result
+	if len(raw) > limit {
+		raw = raw[:limit]
 	}
 
-	hits := make([]Candidate, 0, len(items))
-	for _, item := range items {
+	hits := make([]Candidate, 0, len(raw))
+	for _, r := range raw {
+		var item zbmathHit
+		if err := json.Unmarshal(r, &item); err != nil {
+			// One malformed hit must not sink the rest of the response.
+			continue
+		}
+
 		c := Candidate{
 			Source: "zbmath",
 			Title:  item.Title.Title,

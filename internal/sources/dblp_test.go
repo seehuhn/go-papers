@@ -34,6 +34,16 @@ const dblpSingleAuthorFixture = `{"result":{"hits":{"hit":[
   {"info":{"title":"Solo-Authored Paper.","venue":"CoRR","year":"2015",
     "authors":{"author":{"text":"Solo Author"}}}}]}}}`
 
+const dblpVenueArrayFixture = `{"result":{"hits":{"hit":[
+  {"info":{"title":"Cross-Listed Paper.","venue":["COLT","ALT"],"year":"2012",
+    "authors":{"author":[{"text":"Author One"}]}}}]}}}`
+
+const dblpTwoHitBrokenFixture = `{"result":{"hits":{"hit":[
+  {"info":{"title":12345,"venue":"Bogus","year":"2020"}},
+  {"info":{"title":"Concentration Inequalities.","venue":"COLT","year":"2010",
+    "doi":"10.1234/COLT.2010.99",
+    "authors":{"author":[{"text":"Gabor Lugosi"},{"text":"Pascal Massart"}]}}}]}}}`
+
 func TestDBLPSearch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("format") != "json" {
@@ -65,6 +75,36 @@ func TestDBLPSearchSingleAuthorObject(t *testing.T) {
 	}
 	if len(hits) != 1 || len(hits[0].Authors) != 1 || hits[0].Authors[0] != "Solo Author" {
 		t.Errorf("hits = %+v", hits)
+	}
+}
+
+func TestDBLPSearchVenueArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, dblpVenueArrayFixture)
+	}))
+	t.Cleanup(srv.Close)
+	d := &DBLP{BaseURL: srv.URL, Client: srv.Client()}
+	hits, err := d.Search("cross listed paper", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Venue != "COLT" {
+		t.Errorf("hits = %+v, want Venue = COLT", hits)
+	}
+}
+
+func TestDBLPSearchSkipsMalformedHit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, dblpTwoHitBrokenFixture)
+	}))
+	t.Cleanup(srv.Close)
+	d := &DBLP{BaseURL: srv.URL, Client: srv.Client()}
+	hits, err := d.Search("concentration inequalities", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].DOI != "10.1234/COLT.2010.99" {
+		t.Errorf("hits = %+v, want exactly the well-formed hit", hits)
 	}
 }
 
