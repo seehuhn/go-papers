@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"seehuhn.de/go/paper/internal/bibtex"
+	"seehuhn.de/go/paper/internal/pdfid"
 	"seehuhn.de/go/paper/internal/sources"
 	"seehuhn.de/go/paper/internal/store"
 	"seehuhn.de/go/paper/internal/tex"
@@ -120,6 +121,47 @@ func FromCrossref(w *sources.CrossrefWork) (*store.Paper, error) {
 			Fields: fields,
 		},
 	}, nil
+}
+
+// FillFromPrism fills the gaps in an already-resolved draft entry from
+// the PRISM metadata a publisher embedded in the PDF: journal, volume,
+// number, pages and issn. It never overwrites a field that is already
+// set, so the Crossref record stays authoritative wherever it answered;
+// PRISM only supplies what Crossref left out. A nil entry or nil info
+// does nothing, so the caller need not check either.
+//
+// This is a separate function rather than an extra parameter of
+// [FromCrossref] on purpose: the PRISM data comes from the file being
+// ingested, not from the source record, and only the ingest command
+// holds both. Threading it through FromCrossref would change a signature
+// three commands and a dozen tests depend on to carry a value two of
+// those callers never have.
+//
+// The values are treated exactly like the Crossref ones: the journal
+// name is tex.Encode'd and the page range goes through
+// [bibtex.NormalizePages].
+func FillFromPrism(p *store.Paper, info *pdfid.PrismInfo) {
+	if p == nil || info == nil {
+		return
+	}
+	if p.Bibtex.Fields == nil {
+		p.Bibtex.Fields = make(map[string]string)
+	}
+
+	fillGap(p.Bibtex.Fields, "journal", tex.Encode(info.PublicationName))
+	fillGap(p.Bibtex.Fields, "volume", info.Volume)
+	fillGap(p.Bibtex.Fields, "number", info.Number)
+	fillGap(p.Bibtex.Fields, "pages", bibtex.NormalizePages(info.Pages))
+	fillGap(p.Bibtex.Fields, "issn", info.ISSN)
+}
+
+// fillGap sets fields[name] to value, unless the field already has a
+// value or the new one is empty.
+func fillGap(fields map[string]string, name, value string) {
+	if value == "" || fields[name] != "" {
+		return
+	}
+	fields[name] = value
 }
 
 // FromArxiv builds a preprint-only draft (@misc with eprint fields). The

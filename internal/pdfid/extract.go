@@ -72,6 +72,16 @@ type DocText struct {
 	// alternatives and x-default fallback need the typed dc:title
 	// lookup that [xmpTitle] performs).
 	XMPTitle string
+	// XMPDOI is the DOI the XMP packet states, read as a typed value
+	// (prism:doi, else pdfx:doi, else dc:identifier) and normalized to
+	// the bare DOI; "" when the packet names no DOI.  Unlike a DOI
+	// recovered from DocText.XMP by regex it is exact, so tier 1 uses it
+	// in preference to any pattern match.  See [xmpDOI].
+	XMPDOI string
+	// Prism holds the publisher metadata (journal, ISSN, volume, issue,
+	// pages, cover date) read from the packet's PRISM and pdfx
+	// namespaces, or nil when the packet carries none.  See [PrismInfo].
+	Prism *PrismInfo
 }
 
 // maxXMPBytes caps the length of DocText.XMP.  Metadata packets are
@@ -105,6 +115,8 @@ func Extract(path string, maxPages int) (*DocText, error) {
 	if md := r.GetMeta().Catalog.Metadata; md != nil && md.Data != nil {
 		res.XMP = xmpText(md.Data)
 		res.XMPTitle = xmpTitle(md.Data)
+		res.Prism = readPrism(md.Data)
+		res.XMPDOI = xmpDOI(md.Data, res.Prism)
 	}
 
 	if maxPages <= 0 {
@@ -151,8 +163,10 @@ func Extract(path string, maxPages int) (*DocText, error) {
 // along the way) and joining the text leaves with newlines, capped at
 // maxXMPBytes.  Raw is a closed set of four types - Text, URL, RawStruct,
 // and RawArray - so this walk reaches every namespace stored in the
-// packet, including ones this package has no typed model for (e.g.
-// prism:doi, pdfx:doi).  Unlike serialising the packet back to XML and
+// packet, including ones neither go-xmp nor this package has a typed
+// model for (a publisher's CrossMark properties, say).  It is the
+// fallback behind the typed reads in prism.go, which cover only the
+// namespaces they model.  Unlike serialising the packet back to XML and
 // scanning that, the returned text is never entity-escaped, so an
 // identifier containing '<' or '>' (a legacy SICI DOI, say) comes back
 // intact instead of corrupted into "&lt;"/"&gt;" and silently

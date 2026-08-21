@@ -137,27 +137,25 @@ func TestIdentifyTier1XMPDOI(t *testing.T) {
 }
 
 // TestIdentifyTier1XMPSICIDOI checks that a legacy Wiley/SICI DOI
-// containing '<' and '>' is no longer corrupted by the XMP path.
+// containing '<' and '>' survives the XMP path intact.
 //
-// Before this fix, serialising the packet back to XML and regex-scanning
-// that XML-escaped the angle brackets into "&lt;"/"&gt;" entity text.
-// doiRegex's [^\s"<>] character class does not exclude that entity text
-// (only the raw characters), so the match ran straight through it and
-// returned a WRONG, corrupted DOI - with the literal text "&lt;"/"&gt;"
-// embedded in it - and ok==true: silent bad data.
+// This test has a history worth keeping. Originally the packet was
+// serialised back to XML and regex-scanned, which XML-escaped the angle
+// brackets into "&lt;"/"&gt;" entity text. doiRegex's [^\s"<>] character
+// class does not exclude that entity text (only the raw characters), so
+// the match ran straight through it and returned a WRONG, corrupted DOI
+// - with the literal text "&lt;"/"&gt;" embedded in it - and ok==true:
+// silent bad data. Reading the property text directly removed the
+// corruption but left doiRegex stopping at the first real '<', so the
+// DOI came back truncated to a correct prefix.
 //
-// Reading the property text directly (never serialised) removes that
-// corruption: doiRegex now sees the real '<' character and stops there,
-// same as it does for a SICI DOI in ordinary page text (see the
-// package-level "Out of scope" note - doiRegex's own <> exclusion is a
-// separate, ledgered issue this fix does not touch). So the DOI below is
-// truncated, exactly like tier 2's page-text path, but it is the correct
-// *prefix* of the real DOI, not a wrong string containing "&lt;"/"&gt;".
+// Reading dc:identifier as a TYPED value (see xmpDOI, added with the
+// PRISM schemas) removes the truncation too: no regex is involved, so
+// the DOI comes back byte for byte. doiRegex's own '<'/'>' exclusion is
+// untouched and still truncates a SICI DOI found in page text at tier 2;
+// that remains the separately ledgered issue.
 func TestIdentifyTier1XMPSICIDOI(t *testing.T) {
 	const full = `10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4`
-	// doiRegex stops at the first literal '<', which is expected and
-	// unrelated to this fix (see doc comment above).
-	const wantTruncated = `10.1002/(SICI)1097-0258(19960229)15:4`
 
 	path := filepath.Join(t.TempDir(), "sici.pdf")
 	packet := pdfidtest.DublinCorePacket(t, "doi:"+full, "")
@@ -172,23 +170,26 @@ func TestIdentifyTier1XMPSICIDOI(t *testing.T) {
 		t.Errorf("XMP = %q, must contain the raw '<'/'>' characters, not XML entities", d.XMP)
 	}
 	id := Identify(d, nil)
-	if id.Tier != 1 || id.DOI != wantTruncated {
-		t.Errorf("id = %+v, want the uncorrupted (if truncated) DOI %q at tier 1", id, wantTruncated)
+	if id.Tier != 1 || id.DOI != full {
+		t.Errorf("id = %+v, want the exact DOI %q at tier 1", id, full)
 	}
 }
 
 // TestIdentifyTier1XMPUnmodelledNamespace checks that a DOI stored in a
-// namespace this package has no typed model for (prism:doi, here) is
-// still found.  DocText.XMP is built by walking every property in the
-// packet, not by decoding known models, so it must reach namespaces
-// go-xmp's DublinCore/PDF/etc. structs never mention.
+// namespace this package has no typed model for is still found.
+// DocText.XMP is built by walking every property in the packet, not by
+// decoding known models, so it must reach namespaces neither go-xmp's
+// DublinCore/PDF/etc. structs nor this package's PRISM models mention.
+// The namespace used here is Crossref's CrossMark schema, which is
+// genuinely unmodelled; PRISM and pdfx are now read by [readPrism] and
+// so would not exercise the walk.
 func TestIdentifyTier1XMPUnmodelledNamespace(t *testing.T) {
 	const want = "10.1080/01621459.1963.10500830"
 
-	path := filepath.Join(t.TempDir(), "prism.pdf")
+	path := filepath.Join(t.TempDir(), "crossmark.pdf")
 	packet := xmp.NewPacket()
-	const prismNS = "http://prismstandard.org/namespaces/basic/2.0/"
-	if err := packet.SetValue(prismNS, "doi", xmp.NewText(want)); err != nil {
+	const crossmarkNS = "http://crossref.org/crossmark/1.0/"
+	if err := packet.SetValue(crossmarkNS, "DOI", xmp.NewText(want)); err != nil {
 		t.Fatalf("SetValue: %v", err)
 	}
 	pdfidtest.MakePDF(t, path, "", "", []string{"body text without any identifier"}, nil,
@@ -200,7 +201,7 @@ func TestIdentifyTier1XMPUnmodelledNamespace(t *testing.T) {
 	}
 	id := Identify(d, nil)
 	if id.Tier != 1 || id.DOI != want {
-		t.Errorf("id = %+v, want the DOI from the unmodelled prism:doi property at tier 1", id)
+		t.Errorf("id = %+v, want the DOI from the unmodelled CrossMark property at tier 1", id)
 	}
 }
 

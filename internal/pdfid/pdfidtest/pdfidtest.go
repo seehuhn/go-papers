@@ -18,6 +18,8 @@
 package pdfidtest
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"golang.org/x/text/language"
@@ -42,6 +44,47 @@ func WithXMP(p *xmp.Packet) Option {
 	return func(opt *pdf.WriterOptions) {
 		opt.DocumentMetadata = &pdf.MetadataStream{Data: p, Plaintext: true}
 	}
+}
+
+// The XMP namespace URIs the PRISM fixtures use.  Publishers embed all
+// three PRISM Basic versions in the wild; PDFXNS is the Adobe "custom
+// document properties" namespace Springer and others use for pdfx:doi.
+const (
+	PrismNS20 = "http://prismstandard.org/namespaces/basic/2.0/"
+	PrismNS21 = "http://prismstandard.org/namespaces/basic/2.1/"
+	PrismNS30 = "http://prismstandard.org/namespaces/basic/3.0/"
+	PDFXNS    = "http://ns.adobe.com/pdfx/1.3/"
+)
+
+// SetProperties sets simple text properties in namespace ns on p, keyed
+// by property name (e.g. "doi", "publicationName").  Properties with an
+// empty value are skipped, so a fixture can list a field it does not
+// want to set.  Use it to layer a second namespace onto a packet built
+// by [PrismPacket] or [DublinCorePacket].
+func SetProperties(t *testing.T, p *xmp.Packet, ns string, props map[string]string) {
+	t.Helper()
+
+	for _, name := range slices.Sorted(maps.Keys(props)) {
+		if props[name] == "" {
+			continue
+		}
+		if err := p.SetValue(ns, name, xmp.NewText(props[name])); err != nil {
+			t.Fatalf("cannot set %s %s: %v", ns, name, err)
+		}
+	}
+}
+
+// PrismPacket returns an XMP packet carrying the given PRISM Basic
+// properties in namespace ns (one of [PrismNS20], [PrismNS21],
+// [PrismNS30]).  The keys are bare PRISM property names, e.g.
+// map[string]string{"doi": "10.1234/x", "volume": "12"}.
+func PrismPacket(t *testing.T, ns string, props map[string]string) *xmp.Packet {
+	t.Helper()
+
+	p := xmp.NewPacket()
+	p.RegisterPrefix(ns, "prism")
+	SetProperties(t, p, ns, props)
+	return p
 }
 
 // DublinCorePacket returns an XMP packet carrying the given dc:identifier

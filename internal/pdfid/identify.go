@@ -98,14 +98,26 @@ func allPagesEmpty(pages []string) bool {
 }
 
 // tier1 looks for a DOI or arXiv stamp in the document metadata: the
-// Info dictionary's Subject and Keywords fields, its non-standard
-// entries (Custom), where a "doi" entry often hides, and the XMP
-// metadata packet. The candidate strings are scanned in a deterministic
-// order (see tier1Values): all of them are checked for a DOI first,
-// then, only if no DOI was found anywhere, all of them are checked for
-// an arXiv stamp. Title is not scanned (per the task brief, "Title
-// unused here").
+// XMP packet's typed DOI properties, the Info dictionary's Subject and
+// Keywords fields, its non-standard entries (Custom), where a "doi"
+// entry often hides, and the text of the XMP packet. The candidate
+// strings are scanned in a deterministic order (see tier1Values): all of
+// them are checked for a DOI first, then, only if no DOI was found
+// anywhere, all of them are checked for an arXiv stamp. Title is not
+// scanned (per the task brief, "Title unused here").
+//
+// DocText.XMPDOI comes before everything else because it is not a
+// pattern match at all: it is a DOI the producer stated in a property
+// whose meaning is "this is the DOI" (prism:doi, pdfx:doi,
+// dc:identifier), read as a typed value and normalized. Every other
+// candidate is a regex guess over free text, which can both miss (a
+// SICI DOI is truncated at its first '<') and mislead (a reference list
+// in Keywords). A stated DOI outranks a guessed one.
 func tier1(d *DocText) (ID, bool) {
+	if d.XMPDOI != "" {
+		return ID{DOI: d.XMPDOI, Tier: 1}, true
+	}
+
 	values := tier1Values(d)
 	if len(values) == 0 {
 		return ID{}, false

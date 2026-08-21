@@ -191,6 +191,76 @@ func TestIngestBatchCreatesEntries(t *testing.T) {
 	}
 }
 
+// crossrefSparseWorkResponse is the Hoeffding record with the
+// bibliographic fields a publisher's PRISM packet also carries
+// (container-title, volume, issue, page) left out, so that a gap filled
+// from PRISM is visible.
+const crossrefSparseWorkResponse = `{"status":"ok","message-type":"work","message":{
+  "DOI":"10.1080/01621459.1963.10500830","type":"journal-article",
+  "title":["Probability Inequalities for Sums of Bounded Random Variables"],
+  "author":[{"given":"Wassily","family":"Hoeffding","sequence":"first"}],
+  "published":{"date-parts":[[1963,3]]}}}`
+
+// TestIngestFillsGapsFromPrism is the end-to-end check of the typed XMP
+// path: a PDF whose only identifier is a prism:doi, written as a DOI
+// proxy URL the way a PRISM 2.0-era producer would.
+//
+// Two things must happen. The DOI must reach Crossref normalized - the
+// proxy URL sent verbatim would 404 and turn an identified paper into an
+// unidentified one - and the bibliographic fields Crossref left out must
+// be filled from the PRISM packet rather than left for the polish pass.
+func TestIngestFillsGapsFromPrism(t *testing.T) {
+	fetchFixtureStore(t)
+
+	var askedFor string
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		askedFor = r.URL.Path
+		io.WriteString(w, crossrefSparseWorkResponse)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+
+	f := filepath.Join(t.TempDir(), "prism.pdf")
+	packet := pdfidtest.PrismPacket(t, pdfidtest.PrismNS20, map[string]string{
+		"doi":             "https://doi.org/10.1080/01621459.1963.10500830",
+		"publicationName": "Journal of the American Statistical Association",
+		"issn":            "0162-1459",
+		"volume":          "58",
+		"number":          "301",
+		"startingPage":    "13",
+		"endingPage":      "30",
+	})
+	pdfidtest.MakePDF(t, f, "", "", []string{"body text without any identifier"}, nil,
+		pdfidtest.WithXMP(packet))
+
+	if err := runIngest([]string{f}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(askedFor, "10.1080/01621459.1963.10500830") ||
+		strings.Contains(askedFor, "doi.org") {
+		t.Errorf("crossref was asked for %q, want the bare DOI", askedFor)
+	}
+
+	s, _ := store.Open("")
+	p, err := s.Load("hoeffding_1963")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"journal": "Journal of the American Statistical Association",
+		"volume":  "58",
+		"number":  "301",
+		"pages":   "13--30",
+		"issn":    "0162-1459",
+	}
+	for k, v := range want {
+		if p.Bibtex.Fields[k] != v {
+			t.Errorf("field %s = %q, want %q from the PRISM packet", k, p.Bibtex.Fields[k], v)
+		}
+	}
+}
+
 func TestIngestDOIOverride(t *testing.T) {
 	storeDir := fetchFixtureStore(t)
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

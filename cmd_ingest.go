@@ -369,7 +369,7 @@ func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (
 		if ref.Kind != sources.RefDOI {
 			return "", 0, fmt.Errorf("-doi %q is not a DOI", doiOverride)
 		}
-		key, err := in.ingestDOI(f, trimDOI(ref.DOI))
+		key, err := in.ingestDOI(f, trimDOI(ref.DOI), nil)
 		return key, 0, err
 
 	case arxivOverride != "":
@@ -387,7 +387,7 @@ func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (
 	}
 	switch {
 	case id.DOI != "":
-		key, err := in.ingestDOI(f, id.DOI)
+		key, err := in.ingestDOI(f, id.DOI, doc.Prism)
 		return key, id.Tier, err
 	case id.ArxivID != "":
 		key, err := in.ingestArxiv(f, id.ArxivID, id.Version)
@@ -429,7 +429,13 @@ func (in *ingester) searchTitle(titleGuess string) (doi, matchedTitle string, sc
 // ingestDOI resolves a DOI through Crossref and attaches the file to the
 // draft entry it creates. Unpaywall is not consulted: it exists to find a
 // PDF, and we are holding one.
-func (in *ingester) ingestDOI(f ingestFile, doi string) (string, error) {
+//
+// prism is the publisher metadata read out of the file's XMP packet, or
+// nil when the file carried none (and when -doi skipped identification
+// altogether). Crossref stays authoritative; the PRISM fields only fill
+// gaps the Crossref record left, which saves the polish pass from
+// looking up a journal name or page range by hand.
+func (in *ingester) ingestDOI(f ingestFile, doi string, prism *pdfid.PrismInfo) (string, error) {
 	key, err := findDuplicate(in.store, doi, "")
 	if err != nil {
 		return "", err
@@ -446,6 +452,7 @@ func (in *ingester) ingestDOI(f ingestFile, doi string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	resolve.FillFromPrism(p, prism)
 	return in.createAndAttach(f, p, "published.pdf", "created from crossref record "+work.DOI)
 }
 
