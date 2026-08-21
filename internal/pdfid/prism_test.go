@@ -18,6 +18,7 @@ package pdfid
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,6 +26,104 @@ import (
 
 	"seehuhn.de/go/paper/internal/pdfid/pdfidtest"
 )
+
+// TestPrismModelTagsAgree is the guard the struct conversions in
+// prism.go cannot be: it compares the three PRISM Basic models property
+// by property.
+//
+// The conversions to prismValues already stop the package building if a
+// field is added, removed, renamed or retyped in one copy alone. They
+// stop nothing else, because Go ignores struct tags when checking type
+// identity for a conversion. Misspelling a tag in one copy - `eissn` for
+// `eIssn` in the 2.0 model, say - compiles cleanly and silently yields
+// an absent property for that namespace version, which is invisible to
+// every other test here: TestPrismModelRoundTrip exercises all thirteen
+// tags but only for 2.1, and TestPrismNamespaceVersions checks only
+// doi/publicationName/volume for 2.0 and 3.0.
+//
+// So: the (field name, xmp tag) sequences must be identical across the
+// three, every property tag must be present (an empty tag makes go-xmp
+// fall back to the Go field name, so "DOI" would be looked up instead of
+// "doi"), and each model must carry the namespace URI of its own
+// version - a copy-paste leaving 3.0 on the 2.1 URI would make
+// readPrismBasic read the same namespace twice and never see 3.0 at all.
+func TestPrismModelTagsAgree(t *testing.T) {
+	models := []struct {
+		name string
+		typ  reflect.Type
+		ns   string
+	}{
+		{"prismBasic21", reflect.TypeFor[prismBasic21](), pdfidtest.PrismNS21},
+		{"prismBasic20", reflect.TypeFor[prismBasic20](), pdfidtest.PrismNS20},
+		{"prismBasic30", reflect.TypeFor[prismBasic30](), pdfidtest.PrismNS30},
+	}
+
+	var want []xmpModelField
+	for _, m := range models {
+		ns, prefix, fields := xmpModelFields(m.typ)
+
+		if ns != m.ns {
+			t.Errorf("%s: namespace = %q, want %q", m.name, ns, m.ns)
+		}
+		if prefix != "prism" {
+			t.Errorf("%s: prefix = %q, want %q", m.name, prefix, "prism")
+		}
+		for _, f := range fields {
+			if f.tag == "" {
+				t.Errorf("%s: field %s has no xmp tag, so go-xmp would look up the property as %q",
+					m.name, f.name, f.name)
+			}
+		}
+
+		if want == nil {
+			want = fields
+			continue
+		}
+		if !reflect.DeepEqual(fields, want) {
+			t.Errorf("%s properties:\n got %v\nwant %v (as declared by %s)",
+				m.name, fields, want, models[0].name)
+		}
+	}
+
+	// Guard the guard: a model whose fields all stopped being read would
+	// make the comparison above vacuously true.
+	if len(want) != 13 {
+		t.Errorf("found %d PRISM properties, want the 13 declared ones", len(want))
+	}
+}
+
+// xmpModelField is one property of an XMP model: the Go field name and
+// the xmp struct tag that names the property in the packet.
+type xmpModelField struct {
+	name string
+	tag  string
+}
+
+func (f xmpModelField) String() string { return f.name + `:"` + f.tag + `"` }
+
+// xmpModelFields reports the namespace URI and preferred prefix declared
+// by an XMP model's marker fields, and the property fields in
+// declaration order with their xmp tags.  It mirrors how go-xmp itself
+// reads a model (see Packet.Get): the markers are recognised by type,
+// and a property is any other field whose type implements xmp.Value.
+func xmpModelFields(typ reflect.Type) (ns, prefix string, fields []xmpModelField) {
+	nsType := reflect.TypeFor[xmp.Namespace]()
+	prefixType := reflect.TypeFor[xmp.Prefix]()
+	valueType := reflect.TypeFor[xmp.Value]()
+
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		switch {
+		case f.Type == nsType:
+			ns = f.Tag.Get("xmp")
+		case f.Type == prefixType:
+			prefix = f.Tag.Get("xmp")
+		case f.Type.Implements(valueType):
+			fields = append(fields, xmpModelField{name: f.Name, tag: f.Tag.Get("xmp")})
+		}
+	}
+	return ns, prefix, fields
+}
 
 // TestPrismModelRoundTrip checks that the typed PRISM model can be
 // written into a packet and read back unchanged.  This is the basic

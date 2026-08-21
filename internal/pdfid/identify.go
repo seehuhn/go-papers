@@ -136,11 +136,18 @@ func tier1(d *DocText) (ID, bool) {
 	return ID{}, false
 }
 
-// tier1Values collects the metadata strings that tier 1 scans: Subject
-// and Keywords (each included only if set), followed by the Custom map's
-// values in sorted-by-key order (for determinism), and finally the
-// serialised XMP packet. The XMP packet comes last so that an explicit
-// Info-dict entry wins over whatever a producer left in the packet.
+// tier1Values collects the metadata strings that tier 1 regex-scans:
+// Subject and Keywords (each included only if set), followed by the
+// Custom map's values in sorted-by-key order (for determinism), and
+// finally the text of the XMP packet. Within this list an Info-dict
+// entry wins over whatever a producer left in the packet, which is why
+// the packet text comes last.
+//
+// The list is only reached when the packet stated no DOI: [tier1] takes
+// DocText.XMPDOI first, so for DOIs an XMP property whose meaning is
+// "this is the DOI" outranks every entry here. The ordering below
+// governs the remaining cases - a DOI nobody stated typed, and the arXiv
+// stamp scan, which has no typed path at all.
 func tier1Values(d *DocText) []string {
 	var values []string
 	if d.Subject != "" {

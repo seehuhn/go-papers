@@ -82,9 +82,21 @@ type PrismInfo struct {
 // tag must be a literal, so the URI is fixed at compile time and one
 // model cannot serve several namespace versions.  Publishers use 2.0,
 // 2.1 and 3.0 interchangeably (Elsevier writes 2.0 to this day), so all
-// three have to be declared.  Keep the field lists identical: the
-// conversions to [prismValues] are compile-time-checked struct
-// conversions and will stop building if the three drift apart.
+// three have to be declared.
+//
+// Keep the field lists identical.  Two guards enforce that, and it takes
+// both:
+//
+//   - The conversions to [prismValues] are struct conversions, so adding,
+//     removing, renaming or retyping a field in one copy alone stops the
+//     package building.
+//   - They catch nothing else.  Go ignores struct tags when checking type
+//     identity for a conversion, so misspelling a tag in one copy - say
+//     `xmp:"eissn"` for `xmp:"eIssn"` in the 2.0 model - compiles
+//     cleanly and silently yields an absent property for that version.
+//     TestPrismModelTagsAgree compares the (field name, xmp tag) pairs of
+//     the three models by reflection and is the only thing standing
+//     between a typo there and data quietly going missing.
 
 // prismBasic21 models the PRISM Basic 2.1 namespace.  The property names
 // follow the PRISM specification; note the capital "I" in "eIssn".
@@ -150,9 +162,14 @@ type prismBasic30 struct {
 
 // prismValues is the namespace-independent carrier for the values read
 // from any of the PRISM Basic models.  It has the same field sequence as
-// the models but no namespace tag, so the three models convert to it
-// directly (Go ignores struct tags when checking type identity for a
-// conversion) and it can never be passed to Packet.Get by mistake.
+// the models but no tags, so the three models convert to it directly (Go
+// ignores struct tags when checking type identity for a conversion).
+//
+// Its untagged marker field is a runtime tripwire, not a compile-time
+// impossibility: passing a prismValues to Packet.Get compiles, and Get
+// then panics with "not an XMP namespace struct" because it finds no
+// namespace URI.  That is the intended outcome - a decode into this type
+// is a mistake - but it surfaces when the code runs, not when it builds.
 type prismValues struct {
 	_ xmp.Namespace
 	_ xmp.Prefix
