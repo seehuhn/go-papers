@@ -486,6 +486,44 @@ func TestAuditNeverWritesToTheStore(t *testing.T) {
 	}
 }
 
+// cleanPaperForAudit returns a valid clean article entry holding
+// published.pdf, for tests that need a store match without caring about
+// the bibliographic details.
+func cleanPaperForAudit() *store.Paper {
+	return &store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "published",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Hoeffding, Wassily", "title": "Probability inequalities",
+			"journal": "J. Amer. Statist. Assoc.", "year": "1963",
+			"doi": "10.1080/01621459.1963.10500830"}},
+		Versions: map[string]store.Version{"published.pdf": {Acquired: "2026-08-20"}}}
+}
+
+// bibForPaper renders p's bibtex entry as a .bib file body, so a test can
+// audit exactly the reference the store already holds.
+func bibForPaper(p *store.Paper) string {
+	return bibtex.Format(p.Key, p.Bibtex)
+}
+
+func TestAuditReportsRecordedClaims(t *testing.T) {
+	dir := initStore(t, "")
+	guardBases(t)
+	s := openConfiguredStore(t)
+	p := cleanPaperForAudit()
+	p.Audit = &store.Audit{Claims: []store.Claim{{
+		Claim: "bounds the deviation", Verdict: "supports",
+		Version: "published.pdf", Date: "2026-08-23"}}}
+	s.Save(p)
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(bibForPaper(p)), 0o644)
+
+	out := captureStdout(t, func() { runAudit([]string{bib}) })
+
+	if !strings.Contains(out, "1 claim") {
+		t.Errorf("output should say a claim is already recorded:\n%s", out)
+	}
+}
+
 // storeSnapshot returns a stable description of every file under dir, so a
 // test can assert that a command left the store untouched.
 func storeSnapshot(t *testing.T, dir string) string {

@@ -35,8 +35,24 @@ type Paper struct {
 	Abstract string             `json:"abstract,omitzero"` // plain text
 	Holdings string             `json:"holdings"`          // none|preprint|published|both
 	Versions map[string]Version `json:"versions,omitzero"` // per held file
-	Audit    map[string]any     `json:"audit,omitzero"`    // schema in Plan D
+	Audit    *Audit             `json:"audit,omitzero"`
 	Log      []LogEntry         `json:"log,omitzero"`
+}
+
+// Audit holds the semantic-verification records for one paper: which
+// claims citing it have been checked, against which held version.
+type Audit struct {
+	Claims []Claim `json:"claims,omitzero"`
+}
+
+// Claim is one verified citation.
+type Claim struct {
+	Claim   string `json:"claim"`           // the citing sentence, verbatim
+	Source  string `json:"source,omitzero"` // where it cites from
+	Verdict string `json:"verdict"`         // supports|partial|refutes|unverifiable
+	Version string `json:"version"`         // the held file that was read
+	Date    string `json:"date"`            // ISO date
+	Note    string `json:"note,omitzero"`
 }
 
 // ArxivRef identifies a paper's arXiv record.

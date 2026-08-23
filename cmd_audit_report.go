@@ -41,6 +41,7 @@ type auditEntry struct {
 	Existence  string           `json:"existence"`
 	StoreKey   string           `json:"storeKey,omitzero"`
 	Holdings   string           `json:"holdings,omitzero"`
+	Claims     int              `json:"claims,omitzero"` // recorded semantic-verification claims
 	Problems   []string         `json:"problems,omitzero"`
 	Candidates []auditCandidate `json:"candidates,omitzero"`
 }
@@ -116,6 +117,13 @@ func renderProse(r *auditReport) string {
 		names := make([]string, len(confirmed))
 		for i, e := range confirmed {
 			names[i] = fmt.Sprintf("%s -> %s", e.Key, e.StoreKey)
+			if e.Claims > 0 {
+				noun := "claims"
+				if e.Claims == 1 {
+					noun = "claim"
+				}
+				names[i] += fmt.Sprintf(", %d %s recorded", e.Claims, noun)
+			}
 		}
 		fmt.Fprintf(&b, "\nConfirmed: %s\n", strings.Join(names, ", "))
 	}

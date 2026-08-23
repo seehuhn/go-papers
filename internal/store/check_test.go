@@ -271,3 +271,64 @@ func TestCheckEscapedSpecialCharOK(t *testing.T) {
 		t.Errorf("escaped and math-mode specials must pass, got %v", ps)
 	}
 }
+
+// cleanPaperWithAudit returns a valid entry holding published.pdf, with the
+// given audit records attached, so a test can vary only the audit part.
+func cleanPaperWithAudit(a *Audit) *Paper {
+	return &Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "published",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Hoeffding, Wassily", "title": "Probability inequalities",
+			"journal": "J. Amer. Statist. Assoc.", "year": "1963",
+			"doi": "10.1080/01621459.1963.10500830"}},
+		Versions: map[string]Version{"published.pdf": {Acquired: "2026-08-20"}},
+		Audit:    a}
+}
+
+func TestCheckAuditRejectsAnUnknownVerdict(t *testing.T) {
+	p := cleanPaperWithAudit(&Audit{Claims: []Claim{{
+		Claim:   "Hoeffding's inequality bounds the deviation",
+		Verdict: "probably", Version: "published.pdf", Date: "2026-08-23"}}})
+
+	problems := CheckPaper(p)
+
+	if !problemsContain(problems, "probably") {
+		t.Errorf("an unknown verdict must be an error, got %v", problems)
+	}
+}
+
+func TestCheckAuditRequiresAVersionThatIsHeld(t *testing.T) {
+	p := cleanPaperWithAudit(&Audit{Claims: []Claim{{
+		Claim: "a claim", Verdict: "supports",
+		Version: "nosuchfile.pdf", Date: "2026-08-23"}}})
+
+	if !problemsContain(CheckPaper(p), "nosuchfile.pdf") {
+		t.Error("a claim verified against a file the entry does not hold must be an error")
+	}
+}
+
+func TestCheckAuditRequiresAClaimAndADate(t *testing.T) {
+	p := cleanPaperWithAudit(&Audit{Claims: []Claim{{
+		Verdict: "supports", Version: "published.pdf"}}})
+
+	problems := CheckPaper(p)
+	if !problemsContain(problems, "claim") || !problemsContain(problems, "date") {
+		t.Errorf("an empty claim and a missing date must both be reported, got %v", problems)
+	}
+}
+
+func TestCheckAuditAcceptsAGoodRecord(t *testing.T) {
+	p := cleanPaperWithAudit(&Audit{Claims: []Claim{{
+		Claim:   "Hoeffding's inequality bounds the deviation of a bounded sum",
+		Source:  "prob433/paper.tex",
+		Verdict: "supports",
+		Version: "published.pdf",
+		Date:    "2026-08-23",
+		Note:    "Theorem 2, with a=0, b=1"}}})
+
+	for _, prob := range CheckPaper(p) {
+		if strings.Contains(strings.ToLower(prob.Msg), "audit") {
+			t.Errorf("a well-formed record must not be reported: %v", prob)
+		}
+	}
+}

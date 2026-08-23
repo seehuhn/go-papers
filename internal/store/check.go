@@ -89,6 +89,7 @@ func CheckPaper(p *Paper) []Problem {
 	problems = append(problems, checkArticleHasDOI(p)...)
 	problems = append(problems, checkDraftStatus(p)...)
 	problems = append(problems, checkConsistency(p)...)
+	problems = append(problems, checkAudit(p)...)
 
 	return problems
 }
@@ -399,4 +400,45 @@ func checkConsistency(p *Paper) []Problem {
 	}
 
 	return problems
+}
+
+// validVerdicts enumerates the only legal values for Claim.Verdict.
+var validVerdicts = map[string]bool{
+	"supports": true, "partial": true, "refutes": true, "unverifiable": true,
+}
+
+// isoDate matches an ISO calendar date, the form used everywhere in the
+// store.
+var isoDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// Rule 14: checkAudit validates the semantic-verification records. A
+// verdict is a claim about what a paper says, so a record that does not
+// name what was checked, against which held file, on what date, is not a
+// record.
+func checkAudit(p *Paper) []Problem {
+	if p.Audit == nil {
+		return nil
+	}
+	var out []Problem
+	bad := func(format string, args ...any) {
+		out = append(out, Problem{Key: p.Key, Severity: "error",
+			Msg: "audit: " + fmt.Sprintf(format, args...)})
+	}
+	for i, c := range p.Audit.Claims {
+		if strings.TrimSpace(c.Claim) == "" {
+			bad("claim %d has an empty claim", i+1)
+		}
+		if !validVerdicts[c.Verdict] {
+			bad("claim %d has verdict %q; want supports, partial, refutes or unverifiable", i+1, c.Verdict)
+		}
+		if !isoDate.MatchString(c.Date) {
+			bad("claim %d has date %q; want YYYY-MM-DD", i+1, c.Date)
+		}
+		if c.Version == "" {
+			bad("claim %d does not say which version was checked", i+1)
+		} else if _, held := p.Versions[c.Version]; !held {
+			bad("claim %d was checked against %q, which this entry does not hold", i+1, c.Version)
+		}
+	}
+	return out
 }

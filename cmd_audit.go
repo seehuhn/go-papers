@@ -109,6 +109,9 @@ func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 		if p := matchStore(a.papers, e); p != nil {
 			item.StoreKey = p.Key
 			item.Holdings = p.Holdings
+			if p.Audit != nil {
+				item.Claims = len(p.Audit.Claims)
+			}
 			item.Problems = append(item.Problems, diffAgainstStore(e, p)...)
 			if p.Status == "clean" {
 				item.Existence = "confirmed"
