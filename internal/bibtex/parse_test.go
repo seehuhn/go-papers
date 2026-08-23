@@ -374,3 +374,18 @@ func TestParseNamesTheLineForUnterminatedInput(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRecoveryDoesNotEatAnEntryStartingAtTheFailure(t *testing.T) {
+	// The broken entry is missing a comma/brace, so the field loop's
+	// skipSpace stops exactly on the next entry's '@' before failing.
+	in := "@article{broken,\n  title = {Something}\n@article{good,\n  title = {x},\n}"
+
+	got, errs := Parse(strings.NewReader(in))
+
+	if len(got) != 1 || got[0].Key != "good" {
+		t.Errorf("entries = %v, want [good]", got)
+	}
+	if len(errs) != 1 {
+		t.Errorf("errs = %v, want exactly one (for broken)", errs)
+	}
+}

@@ -44,8 +44,9 @@ func init() {
 const ingestPages = 3
 
 // ingestTitleMinScore is the TitleSimilarity an -into file's title must
-// reach against the entry's title to count as verified. It matches the
-// tier-3 acceptance threshold in pdfid.
+// reach against the entry's title to count as verified. The -into
+// verification is deliberately laxer than tier-3 identification because
+// the user already named the target entry; this check is only a safety net.
 const ingestTitleMinScore = 0.8
 
 // ingestSource is the provenance recorded for a file that ingest moved in

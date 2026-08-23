@@ -161,14 +161,12 @@ func (p *parser) file() ([]KeyedEntry, []ParseError) {
 	return entries, errs
 }
 
-// resync advances past the current position to the next '@', where the
-// next entry can plausibly start. Best effort: an '@' inside a broken
-// entry's remaining text resumes parsing early, which at worst reports
-// one extra error.
+// resync advances to the next '@', where the next entry can plausibly
+// start. Best effort: an '@' inside a broken entry's remaining text
+// resumes parsing early, which at worst reports one extra error. The
+// failure position may already be on the next entry's '@' and must not
+// be skipped.
 func (p *parser) resync() {
-	if p.pos < len(p.src) {
-		p.next()
-	}
 	p.skipToAt()
 }
 

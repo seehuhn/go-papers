@@ -81,9 +81,8 @@ func TestAuditConfirmsAResolvableDOI(t *testing.T) {
 }
 
 // refusingServer returns the URL of a server that fails the test if it is
-// contacted. overrideBases leaves an empty base pointing at the real
-// production API, so every service a test does not expect must be given
-// one of these.
+// contacted. A test that does not expect a particular source should give
+// it an explicit refusing URL to catch accidental requests.
 func refusingServer(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

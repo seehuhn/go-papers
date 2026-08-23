@@ -168,6 +168,44 @@ func TestSearchCandidateOrderIsDeterministicOnTies(t *testing.T) {
 	}
 }
 
+func TestSearchCandidateTiebreakerIsTotalOnSourceAndScore(t *testing.T) {
+	// Two candidates from the same source with identical score and no DOI
+	// must still have a defined order. zbmath returns two hits in reverse
+	// alphabetical title order; the defined tiebreak order must be
+	// alphabetical by title (and authors if titles match).
+	queryTitle := "Something"
+	zbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Server returns hits in reverse alphabetical order: "Zulu" then "Alpha".
+		// If the comparator has only score/source/DOI tiebreaks, they stay reversed.
+		// With title/authors tiebreaks, they should sort alphabetically.
+		fmt.Fprintf(w, `{"result":[`+
+			`{"title":{"title":"Zulu"},"year":2001},`+
+			`{"title":{"title":"Alpha"},"year":2001}`+
+			`]}`)
+	}))
+	t.Cleanup(zbSrv.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	overrideBases(t, emptyList.URL, refusingServer(t), refusingServer(t), zbSrv.URL, emptyList.URL)
+
+	a := &auditor{api: zbSrv.Client()}
+	e := bibtex.KeyedEntry{Entry: bibtex.Entry{Type: "misc",
+		Fields: map[string]string{"title": queryTitle}}}
+
+	got, ok := a.search(e)
+	if !ok || len(got) != 2 {
+		t.Fatalf("search = %v, %v; want 2 candidates", got, ok)
+	}
+	// Both have identical score and source, empty DOI, but different titles.
+	// The defined order must be alphabetical by title: Alpha before Zulu.
+	if got[0].Title != "Alpha" || got[1].Title != "Zulu" {
+		t.Errorf("candidates in order %v, want [Alpha, Zulu] (alphabetical by title)",
+			[]string{got[0].Title, got[1].Title})
+	}
+}
+
 func TestArxivIDOfPreservesOldStyleCase(t *testing.T) {
 	e := bibtex.Entry{Fields: map[string]string{"eprint": "arXiv:math.PR/0605234"}}
 

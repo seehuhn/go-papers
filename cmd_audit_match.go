@@ -266,8 +266,9 @@ func (a *auditor) search(e bibtex.KeyedEntry) (cands []scoredCandidate, ok bool)
 		add(hits)
 	}
 
-	// Ties break on the source name and then the DOI, so the reported
-	// candidate order is a property of the input rather than of the sort.
+	// Ties break on the source name, DOI, title, and authors, so the
+	// reported candidate order is a property of the input rather than of
+	// the sort.
 	sort.Slice(cands, func(i, j int) bool {
 		a, b := cands[i], cands[j]
 		if a.Score != b.Score {
@@ -276,7 +277,15 @@ func (a *auditor) search(e bibtex.KeyedEntry) (cands []scoredCandidate, ok bool)
 		if a.Source != b.Source {
 			return a.Source < b.Source
 		}
-		return a.DOI < b.DOI
+		if a.DOI != b.DOI {
+			return a.DOI < b.DOI
+		}
+		if a.Title != b.Title {
+			return a.Title < b.Title
+		}
+		aAuthors := strings.Join(a.Authors, ", ")
+		bAuthors := strings.Join(b.Authors, ", ")
+		return aAuthors < bAuthors
 	})
 	return cands, ok
 }
