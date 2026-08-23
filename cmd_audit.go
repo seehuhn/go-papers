@@ -116,9 +116,18 @@ func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 		}
 		// The store is the authority for what it holds, so a confirmed entry
 		// is not re-resolved unless -online says the report must not depend
-		// on how fresh the store is.
-		if item.Existence != "confirmed" || a.online {
+		// on how fresh the store is. And even then, the store is itself a
+		// source — the paper is physically held — so an online result can
+		// add doubt as a problem note but must never outvote possession: a
+		// store-confirmed entry is never demoted by verify.
+		switch {
+		case item.Existence != "confirmed":
 			item.Existence, item.Candidates = a.verify(e)
+		case a.online:
+			if verdict, cands := a.verify(e); verdict != "confirmed" {
+				item.Problems = append(item.Problems, fmt.Sprintf("online re-verification: %s", verdict))
+				item.Candidates = cands
+			}
 		}
 		r.Entries = append(r.Entries, item)
 	}

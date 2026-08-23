@@ -80,8 +80,8 @@ func corroborates(a, b bibtex.Entry) bool {
 	return sa != "" && strings.EqualFold(sa, sb)
 }
 
-// firstSurname returns the folded surname of the first author, or "" when
-// the author field is missing or does not parse.
+// firstSurname returns the bibtex-encoded surname of the first author, or
+// "" when the author field is missing or does not parse.
 func firstSurname(e bibtex.Entry) string {
 	names, err := bibtex.ParseNames(e.Fields["author"])
 	if err != nil || len(names) == 0 {
@@ -215,18 +215,18 @@ func (a *auditor) search(e bibtex.KeyedEntry) (cands []scoredCandidate, ok bool)
 		}
 	}
 
-	if hits, err := a.crossref().Search(query, 5); err == nil {
+	if hits, err := a.crossref().Search(query, searchRows); err == nil {
 		ok = true
 		for _, w := range hits {
 			c := crossrefCandidate(w)
 			cands = append(cands, scoredCandidate{c, match.TitleSimilarity(title, c.Title)})
 		}
 	}
-	if hits, err := a.zbmath().Search(query, 5); err == nil {
+	if hits, err := a.zbmath().Search(query, searchRows); err == nil {
 		ok = true
 		add(hits)
 	}
-	if hits, err := a.dblp().Search(query, 5); err == nil {
+	if hits, err := a.dblp().Search(query, searchRows); err == nil {
 		ok = true
 		add(hits)
 	}

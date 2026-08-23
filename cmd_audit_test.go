@@ -182,6 +182,247 @@ func TestAuditOnlineRechecksStoreEntries(t *testing.T) {
 	}
 }
 
+// TestAuditOnlineNeverDemotesAStoreConfirmedEntry pins the controller
+// ruling on Finding 1: the store is itself a source, so an online
+// disagreement can add doubt as a Problems note but must never outvote a
+// paper that is physically held. Existence must stay "confirmed" even
+// when the source that would have re-verified it is down.
+func TestAuditOnlineNeverDemotesAStoreConfirmedEntry(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "published",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Hoeffding, Wassily", "title": "Probability inequalities",
+			"journal": "JASA", "year": "1963"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "crossref is down")
+	}))
+	t.Cleanup(down.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte("@article{h,\n  doi = {10.1080/01621459.1963.10500830},\n"+
+		"  author = {Hoeffding, Wassily},\n  title = {Probability inequalities},\n"+
+		"  journal = {JASA},\n  year = {1963},\n}"), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-online", "-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "confirmed" {
+		t.Errorf("Existence = %q, want confirmed (a store-held entry must never be demoted)", r.Entries[0].Existence)
+	}
+	found := false
+	for _, p := range r.Entries[0].Problems {
+		if strings.Contains(p, "online re-verification: unchecked") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Problems should record the failed re-verification: %v", r.Entries[0].Problems)
+	}
+}
+
+// TestAuditConfirmsWhenTitleClearsBarAndCorroborates and
+// TestAuditUnverifiedWhenTitleClearsBarButDoesNotCorroborate pin Finding
+// 2: corroboratesCandidate must actually run and gate the confirm
+// decision, not just the titleBar check. Both use a candidate whose title
+// exactly reproduces the bib title (similarity 1.0, safely above
+// titleBar), so only corroboration differs between them.
+func TestAuditConfirmsWhenTitleClearsBarAndCorroborates(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"message":{"items":[{
+			"DOI":"10.1000/exact",
+			"title":["Robust estimation of a location parameter"],
+			"author":[{"family":"Huber","given":"Peter J."}],
+			"issued":{"date-parts":[[1964]]}}]}}`)
+	}))
+	t.Cleanup(hit.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{huber,
+  author = {Huber, Peter J.},
+  title = {Robust estimation of a location parameter},
+  journal = {Ann. Math. Statist.},
+  year = {1964},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "confirmed" {
+		t.Errorf("Existence = %q, want confirmed (title matches and the author corroborates)", r.Entries[0].Existence)
+	}
+}
+
+func TestAuditUnverifiedWhenTitleClearsBarButDoesNotCorroborate(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"message":{"items":[{
+			"DOI":"10.1000/exact2",
+			"title":["Optimal transport methods in economics"],
+			"author":[{"family":"Nguyen","given":"Anh"}],
+			"issued":{"date-parts":[[2020]]}}]}}`)
+	}))
+	t.Cleanup(hit.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{smith,
+  author = {Smith, John},
+  title = {Optimal transport methods in economics},
+  journal = {J. Econ. Theory},
+  year = {1980},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "unverified" {
+		t.Errorf("Existence = %q, want unverified (title matches but neither author nor year corroborates)", r.Entries[0].Existence)
+	}
+}
+
+// TestAuditDOILookupFailureIsUnchecked and TestAuditAllSearchSourcesDownIsUnchecked
+// pin Finding 3's two controller rulings that a down source must never
+// read as "notFound".
+func TestAuditDOILookupFailureIsUnchecked(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "crossref is down")
+	}))
+	t.Cleanup(down.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{d,
+  author = {Someone, A.},
+  title = {A paper with a doi crossref cannot reach},
+  journal = {J. Whatever},
+  year = {2020},
+  doi = {10.1000/whatever},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "unchecked" {
+		t.Errorf("Existence = %q, want unchecked (crossref being down is not proof the paper does not exist)", r.Entries[0].Existence)
+	}
+}
+
+func TestAuditAllSearchSourcesDownIsUnchecked(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "down")
+	}))
+	t.Cleanup(down.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, down.URL, refuse, refuse, down.URL, down.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{e,
+  author = {Someone, B.},
+  title = {A paper no search source can currently be asked about},
+  journal = {J. Whatever},
+  year = {2020},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "unchecked" {
+		t.Errorf("Existence = %q, want unchecked (every search source being down proves nothing)", r.Entries[0].Existence)
+	}
+}
+
+// TestAuditConfirmsViaArxivID exercises the arXiv identifier branch of
+// verify, which previously had no direct coverage.
+func TestAuditConfirmsViaArxivID(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseNoDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, refuse, arxivSrv.URL, refuse, refuse, refuse)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@misc{voss,
+  author = {Vo{\ss}, Jochen},
+  title = {A study of SPDEs in Greenland},
+  year = {2024},
+  eprint = {2412.05039},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "confirmed" {
+		t.Errorf("Existence = %q, want confirmed (the arXiv ID resolved)", r.Entries[0].Existence)
+	}
+}
+
 func TestAuditOfflineMatchesTheStore(t *testing.T) {
 	dir := initStore(t, "test@example.org")
 	guardBases(t)
