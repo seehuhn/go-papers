@@ -97,11 +97,10 @@ type auditor struct {
 	api    *http.Client
 }
 
-// run checks every parsed bib entry offline: matching it against the
-// store and, when matched, diffing it against the store's version, plus
-// the quality bar every entry is held to regardless of a match. Online
-// verification (Task 3) fills in the "unverified"/"notFound" verdicts
-// this pass leaves as "unchecked".
+// run checks every parsed bib entry against the store — matching it and,
+// when matched, diffing it against the store's version, plus the quality
+// bar every entry is held to regardless of a match — and then, unless the
+// store already confirmed it, against the online sources via verify.
 func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 	r := &auditReport{}
 	for _, e := range entries {
@@ -114,6 +113,12 @@ func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 			if p.Status == "clean" {
 				item.Existence = "confirmed"
 			}
+		}
+		// The store is the authority for what it holds, so a confirmed entry
+		// is not re-resolved unless -online says the report must not depend
+		// on how fresh the store is.
+		if item.Existence != "confirmed" || a.online {
+			item.Existence, item.Candidates = a.verify(e)
 		}
 		r.Entries = append(r.Entries, item)
 	}

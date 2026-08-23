@@ -34,10 +34,10 @@ type auditEntry struct {
 	Key  string `json:"key"` // the .bib citation key
 	Line int    `json:"line"`
 	// Existence is one of:
-	//   confirmed  - matched a clean store entry
+	//   confirmed  - matched a clean store entry, or an identifier resolved
 	//   unverified - a source returned a plausible but unconfirmed candidate
 	//   notFound   - no source returned any candidate; likely hallucinated
-	//   unchecked  - not looked up yet (this task never sets unverified/notFound)
+	//   unchecked  - not looked up (a source was down, so nothing was proved)
 	Existence  string           `json:"existence"`
 	StoreKey   string           `json:"storeKey,omitzero"`
 	Holdings   string           `json:"holdings,omitzero"`
