@@ -451,20 +451,33 @@ func (in *ingester) identify(path string) (*pdfid.DocText, pdfid.ID, error) {
 // searchTitle is the pdfid.SearchFunc for tier 3: it runs the title guess
 // through a Crossref bibliographic search and scores the top hit by how
 // well its title matches the guess. Crossref's own relevance score is not
-// comparable across queries, so the decision rests on the title alone.
-func (in *ingester) searchTitle(titleGuess string) (doi, matchedTitle string, score float64, err error) {
+// comparable across queries, so the score rests on the title alone; the
+// hit's first author and publication year are carried along too, so that
+// tier 3 can corroborate the title match against the document's own text
+// before accepting it (see pdfid.SearchHit).
+func (in *ingester) searchTitle(titleGuess string) (pdfid.SearchHit, error) {
 	hits, err := in.crossref().Search(titleGuess, searchRows)
 	if err != nil {
-		return "", "", 0, err
+		return pdfid.SearchHit{}, err
 	}
 	if len(hits) == 0 || hits[0].DOI == "" {
-		return "", "", 0, nil
+		return pdfid.SearchHit{}, nil
 	}
 	top := hits[0]
+	var matchedTitle string
 	if len(top.Titles) > 0 {
 		matchedTitle = top.Titles[0]
 	}
-	return top.DOI, matchedTitle, match.TitleSimilarity(titleGuess, matchedTitle), nil
+	hit := pdfid.SearchHit{
+		DOI:   top.DOI,
+		Title: matchedTitle,
+		Score: match.TitleSimilarity(titleGuess, matchedTitle),
+		Year:  top.Published.Year(),
+	}
+	if len(top.Authors) > 0 {
+		hit.Author = top.Authors[0].Family
+	}
+	return hit, nil
 }
 
 // ingestDOI resolves a DOI through Crossref and attaches the file to the

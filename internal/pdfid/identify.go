@@ -36,14 +36,39 @@ type ID struct {
 	Scanned bool   // true when no page yielded text
 }
 
-// SearchFunc resolves a title guess to (DOI, matchedTitle, score, err).
-// cmd_ingest wires this to Crossref; tests use a stub. score is the
-// TitleSimilarity between guess and the hit's title.
-type SearchFunc func(titleGuess string) (doi, matchedTitle string, score float64, err error)
+// SearchHit is one candidate reported to tier 3 for a title guess: the
+// candidate's DOI and title, the TitleSimilarity score between the guess
+// and that title, and enough of the candidate's own bibliographic data -
+// the first author's family name and the publication year - for tier 3 to
+// corroborate the title match against the document's own extracted text
+// (see corroborated). Author is "" and Year is 0 when the search found
+// neither for the top hit.
+type SearchHit struct {
+	DOI, Title string
+	Score      float64
+	Author     string // first author's family name, "" if unknown
+	Year       int    // publication year, 0 if unknown
+}
 
-// tier3MinScore is the minimum TitleSimilarity score required for a tier-3
-// title guess to be accepted as an identification.
-const tier3MinScore = 0.8
+// SearchFunc resolves a title guess to a search candidate.
+// cmd_ingest wires this to Crossref; tests use a stub.
+type SearchFunc func(titleGuess string) (SearchHit, error)
+
+// tier3MinScore is the minimum TitleSimilarity score a tier-3 candidate
+// must reach before it is even considered - but score alone is not
+// sufficient, see corroborated.
+//
+// This used to be 0.8, and score alone was the whole gate. During a bulk
+// ingest, that filed Giles's "Multilevel Monte Carlo path simulation" as
+// Giles & Waterhouse's "Multilevel quasi-Monte Carlo path simulation": 5
+// shared title tokens out of 6 scores 0.833, which cleared 0.8 on the
+// title alone. Raising the bar to 0.9 and requiring the candidate to be
+// corroborated by the document's own text closes that hole. Rejection is
+// safe by design here: a candidate tier 3 wrongly refuses just means
+// "paper ingest" reports it cannot tell which paper this is and the
+// agent supplies -doi, whereas a candidate tier 3 wrongly accepts files
+// the wrong paper - the worse failure by far.
+const tier3MinScore = 0.9
 
 // tier3MinTokens is the minimum number of tokens a TopLines entry must
 // have to be considered a plausible title (shorter lines are running
@@ -67,8 +92,10 @@ var (
 )
 
 // Identify runs the tiers in order over an extracted document.
-// Tier 3 accepts only score >= 0.8; below that ID.Tier is 0 and Title
-// still carries the guess so the error message can show it.
+// Tier 3 accepts a candidate only when its title similarity clears
+// tier3MinScore and the candidate is corroborated by the document's own
+// text (see corroborated); otherwise ID.Tier is 0 and Title still carries
+// the guess so the error message can show it.
 func Identify(d *DocText, search SearchFunc) ID {
 	scanned := allPagesEmpty(d.Pages)
 
@@ -208,14 +235,45 @@ func tier3(d *DocText, search SearchFunc) ID {
 		return ID{}
 	}
 
-	doi, _, score, err := search(guess)
+	hit, err := search(guess)
 	if err != nil {
 		return ID{Title: guess}
 	}
-	if score >= tier3MinScore {
-		return ID{DOI: doi, Title: guess, Tier: 3}
+	if hit.Score >= tier3MinScore && corroborated(hit, d) {
+		return ID{DOI: hit.DOI, Title: guess, Tier: 3}
 	}
 	return ID{Title: guess}
+}
+
+// corroborated reports whether hit is corroborated by the document's own
+// extracted text (d.Pages): hit.Author's folded family name occurs among
+// the folded tokens of that text, or hit.Year appears there as a token.
+// A hit with neither an author nor a year is never corroborated - title
+// similarity alone is not enough, see tier3MinScore.
+func corroborated(hit SearchHit, d *DocText) bool {
+	if hit.Author == "" && hit.Year == 0 {
+		return false
+	}
+
+	tokens := make(map[string]bool)
+	for _, t := range match.Tokens(strings.Join(d.Pages, "\n")) {
+		tokens[t] = true
+	}
+
+	if authorTokens := match.Tokens(hit.Author); len(authorTokens) > 0 {
+		found := true
+		for _, t := range authorTokens {
+			if !tokens[t] {
+				found = false
+				break
+			}
+		}
+		if found {
+			return true
+		}
+	}
+
+	return hit.Year != 0 && tokens[strconv.Itoa(hit.Year)]
 }
 
 // metadataTitle returns the tier-3 fallback title guess taken from the

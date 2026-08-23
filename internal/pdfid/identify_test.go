@@ -23,6 +23,7 @@ import (
 
 	"seehuhn.de/go/xmp"
 
+	"seehuhn.de/go/paper/internal/match"
 	"seehuhn.de/go/paper/internal/pdfid/pdfidtest"
 )
 
@@ -55,9 +56,13 @@ func TestIdentifyTier3(t *testing.T) {
 		Pages:    []string{"Probability inequalities for sums of bounded random variables\nWassily Hoeffding"},
 		TopLines: []string{"Probability inequalities for sums of bounded random variables", "Wassily Hoeffding"},
 	}
-	search := func(guess string) (string, string, float64, error) {
-		return "10.1080/01621459.1963.10500830",
-			"Probability Inequalities for Sums of Bounded Random Variables", 1.0, nil
+	search := func(guess string) (SearchHit, error) {
+		return SearchHit{
+			DOI:    "10.1080/01621459.1963.10500830",
+			Title:  "Probability Inequalities for Sums of Bounded Random Variables",
+			Score:  1.0,
+			Author: "Hoeffding",
+		}, nil
 	}
 	id := Identify(d, search)
 	if id.Tier != 3 || id.DOI != "10.1080/01621459.1963.10500830" {
@@ -70,8 +75,8 @@ func TestIdentifyTier3LowScoreRejected(t *testing.T) {
 		Pages:    []string{"Some obscure heading"},
 		TopLines: []string{"Some obscure heading text here"},
 	}
-	search := func(guess string) (string, string, float64, error) {
-		return "10.9999/wrong", "Completely Different Paper", 0.1, nil
+	search := func(guess string) (SearchHit, error) {
+		return SearchHit{DOI: "10.9999/wrong", Title: "Completely Different Paper", Score: 0.1}, nil
 	}
 	id := Identify(d, search)
 	if id.Tier != 0 || id.DOI != "" {
@@ -86,13 +91,14 @@ func TestIdentifyTier3JoinsSameSizeLines(t *testing.T) {
 	d := &DocText{
 		TopLines: []string{"A study of stochastic partial", "differential equations in Greenland", "Jochen Voss"},
 		TopSizes: []float64{20, 20, 12},
+		Pages:    []string{"Jochen Voss\nA study of stochastic partial differential equations in Greenland"},
 	}
 	const want = "A study of stochastic partial differential equations in Greenland"
-	search := func(guess string) (string, string, float64, error) {
+	search := func(guess string) (SearchHit, error) {
 		if guess != want {
 			t.Errorf("guess = %q, want the joined title %q", guess, want)
 		}
-		return "10.1234/greenland-spdes", want, 1.0, nil
+		return SearchHit{DOI: "10.1234/greenland-spdes", Title: want, Score: 1.0, Author: "Voss"}, nil
 	}
 	id := Identify(d, search)
 	if id.Tier != 3 || id.Title != want {
@@ -219,12 +225,12 @@ func TestIdentifyTier1XMPArxiv(t *testing.T) {
 // Info-dict title when the page text yields no usable title guess.
 func TestIdentifyTier3InfoTitleFallback(t *testing.T) {
 	const want = "Probability inequalities for sums of bounded random variables"
-	d := &DocText{Title: want, Pages: []string{""}}
-	search := func(guess string) (string, string, float64, error) {
+	d := &DocText{Title: want, Pages: []string{"Wassily Hoeffding"}}
+	search := func(guess string) (SearchHit, error) {
 		if guess != want {
 			t.Errorf("guess = %q, want the Info-dict title %q", guess, want)
 		}
-		return "10.1080/01621459.1963.10500830", want, 1.0, nil
+		return SearchHit{DOI: "10.1080/01621459.1963.10500830", Title: want, Score: 1.0, Author: "Hoeffding"}, nil
 	}
 	id := Identify(d, search)
 	if id.Tier != 3 || id.DOI != "10.1080/01621459.1963.10500830" || id.Title != want {
@@ -236,12 +242,12 @@ func TestIdentifyTier3InfoTitleFallback(t *testing.T) {
 // neither the page text nor the Info dictionary offers a title.
 func TestIdentifyTier3XMPTitleFallback(t *testing.T) {
 	const want = "A study of SPDEs in Greenland"
-	d := &DocText{XMPTitle: want, Pages: []string{""}}
-	search := func(guess string) (string, string, float64, error) {
+	d := &DocText{XMPTitle: want, Pages: []string{"Jochen Voss"}}
+	search := func(guess string) (SearchHit, error) {
 		if guess != want {
 			t.Errorf("guess = %q, want the dc:title %q", guess, want)
 		}
-		return "10.1234/greenland-spdes", want, 1.0, nil
+		return SearchHit{DOI: "10.1234/greenland-spdes", Title: want, Score: 1.0, Author: "Voss"}, nil
 	}
 	id := Identify(d, search)
 	if id.Tier != 3 || id.DOI != "10.1234/greenland-spdes" {
@@ -254,8 +260,8 @@ func TestIdentifyTier3XMPTitleFallback(t *testing.T) {
 // guess is reported in ID.Title.
 func TestIdentifyTier3MetadataTitleRejected(t *testing.T) {
 	d := &DocText{Title: "Microsoft Word - draft17.doc", Pages: []string{""}}
-	search := func(guess string) (string, string, float64, error) {
-		return "10.9999/wrong", "Completely Different Paper", 0.1, nil
+	search := func(guess string) (SearchHit, error) {
+		return SearchHit{DOI: "10.9999/wrong", Title: "Completely Different Paper", Score: 0.1}, nil
 	}
 	id := Identify(d, search)
 	if id.Tier != 0 || id.DOI != "" {
@@ -273,5 +279,80 @@ func TestIdentifyTier3NilSearchSkipsMetadataTitle(t *testing.T) {
 	id := Identify(d, nil)
 	if id.Tier != 0 || id.Title != "" {
 		t.Errorf("id = %+v, want no tier-3 attempt without a search function", id)
+	}
+}
+
+// TestIdentifyTier3GilesMisfilingRejected is the regression test for the
+// misfiling that motivated raising tier3MinScore: tier 3 guessed Giles's
+// "Multilevel Monte Carlo path simulation" and Crossref's top hit was
+// Giles & Waterhouse's "Multilevel quasi-Monte Carlo path simulation" - 5
+// shared title tokens out of 6, a 0.833 score. That cleared the old bare
+// 0.8 gate even though the document's own author byline (Giles, no
+// Waterhouse) never distinguished the two papers. The candidate must now
+// be rejected: title similarity alone, even with an author that happens
+// to appear in the text, is not enough once the score itself is too low.
+func TestIdentifyTier3GilesMisfilingRejected(t *testing.T) {
+	const guess = "Multilevel Monte Carlo path simulation"
+	const candidateTitle = "Multilevel quasi-Monte Carlo path simulation"
+	score := match.TitleSimilarity(guess, candidateTitle)
+	if score <= 0.8 || score >= 0.9 {
+		t.Fatalf("score = %v, want the Giles/Waterhouse pair to score strictly between 0.8 and 0.9", score)
+	}
+
+	d := &DocText{
+		Pages:    []string{"Multilevel Monte Carlo path simulation\nMichael B. Giles"},
+		TopLines: []string{guess},
+	}
+	search := func(g string) (SearchHit, error) {
+		return SearchHit{DOI: "10.1287/opre.1070.0496", Title: candidateTitle, Score: score, Author: "Giles"}, nil
+	}
+	id := Identify(d, search)
+	if id.Tier != 0 || id.DOI != "" {
+		t.Errorf("id = %+v, want the quasi-Monte Carlo candidate rejected: score %v is below tier3MinScore", id, score)
+	}
+	if id.Title != guess {
+		t.Errorf("Title = %q, want the rejected guess %q reported", id.Title, guess)
+	}
+}
+
+// TestIdentifyTier3NoCorroborationRejected checks that a candidate whose
+// title clears tier3MinScore is still rejected when neither its author's
+// surname nor its publication year appears anywhere in the document's own
+// extracted text - a title match by itself is not corroboration.
+func TestIdentifyTier3NoCorroborationRejected(t *testing.T) {
+	d := &DocText{
+		Pages:    []string{"An anonymous preprint with no author byline or date visible anywhere"},
+		TopLines: []string{"A Well Matched Title About Something"},
+	}
+	search := func(g string) (SearchHit, error) {
+		return SearchHit{
+			DOI: "10.1/whatever", Title: "A Well Matched Title About Something",
+			Score: 0.95, Author: "Smith", Year: 1999,
+		}, nil
+	}
+	id := Identify(d, search)
+	if id.Tier != 0 || id.DOI != "" {
+		t.Errorf("id = %+v, want a high-similarity candidate rejected when neither its author nor its year appears in the document text", id)
+	}
+}
+
+// TestIdentifyTier3HighScoreWithCorroborationAccepted is the positive
+// control for TestIdentifyTier3NoCorroborationRejected: the same
+// high-scoring candidate, but this time its author's surname does appear
+// in the document's extracted text, so it must be accepted.
+func TestIdentifyTier3HighScoreWithCorroborationAccepted(t *testing.T) {
+	d := &DocText{
+		Pages:    []string{"A Well Matched Title About Something\nby Jane Smith, 1999"},
+		TopLines: []string{"A Well Matched Title About Something"},
+	}
+	search := func(g string) (SearchHit, error) {
+		return SearchHit{
+			DOI: "10.1/whatever", Title: "A Well Matched Title About Something",
+			Score: 0.95, Author: "Smith", Year: 1999,
+		}, nil
+	}
+	id := Identify(d, search)
+	if id.Tier != 3 || id.DOI != "10.1/whatever" {
+		t.Errorf("id = %+v, want the high-similarity, author-corroborated candidate accepted", id)
 	}
 }
