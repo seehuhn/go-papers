@@ -24,9 +24,18 @@ import (
 )
 
 // auditReport is the full result of a `paper audit` run: one auditEntry
-// per reference in the .bib file, in file order.
+// per reference in the .bib file, in file order, plus any entries the
+// parser had to skip.
 type auditReport struct {
-	Entries []auditEntry `json:"entries"`
+	Entries     []auditEntry      `json:"entries"`
+	ParseErrors []auditParseError `json:"parseErrors,omitzero"`
+}
+
+// auditParseError is one entry of the .bib file the parser could not
+// read. The entry was skipped; everything else was still audited.
+type auditParseError struct {
+	Line int    `json:"line"`
+	Msg  string `json:"msg"`
 }
 
 // auditEntry is the verdict on one bibliography reference.
@@ -79,6 +88,13 @@ func renderProse(r *auditReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d references: %d confirmed, %d unverified, %d not found, %d not checked\n",
 		len(r.Entries), len(confirmed), len(unverified), len(notFound), len(unchecked))
+
+	if len(r.ParseErrors) > 0 {
+		b.WriteString("\nUnparseable entries (skipped; the rest were audited):\n")
+		for _, pe := range r.ParseErrors {
+			fmt.Fprintf(&b, "  line %d: %s\n", pe.Line, pe.Msg)
+		}
+	}
 
 	if len(notFound) > 0 {
 		b.WriteString("\nNot found:\n")

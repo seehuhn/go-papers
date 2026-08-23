@@ -221,7 +221,9 @@ $ paper bib -all
 ### `paper audit [-online] [-json] <refs.bib>`
 
 Checks a bibliography file — the kind an agent hands off after writing a
-paper — against reality, without touching the store. Every entry is
+paper — against reality, without touching the store. A malformed entry
+does not stop the run: it is reported with its line number and skipped,
+and everything else is still audited. Every entry is
 matched against the store by DOI, then arXiv ID, then title; a match
 against a `clean` store entry is diffed field by field, and the store is
 the authority for anything it holds, since a clean entry has already

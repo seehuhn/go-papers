@@ -57,9 +57,13 @@ func runAudit(args []string) error {
 		return fmt.Errorf("audit: %w", err)
 	}
 	defer f.Close()
-	entries, err := bibtex.Parse(f)
-	if err != nil {
-		return fmt.Errorf("audit: %s: %w", fs.Arg(0), err)
+	entries, parseErrs := bibtex.Parse(f)
+	for _, pe := range parseErrs {
+		// Line 0 is a failure to read the file at all, not a bad entry;
+		// there is nothing to audit past it.
+		if pe.Line == 0 {
+			return fmt.Errorf("audit: %s: %s", fs.Arg(0), pe.Msg)
+		}
 	}
 
 	s, cfg, err := openStore(*storeFlag)
@@ -74,6 +78,9 @@ func runAudit(args []string) error {
 	a := &auditor{papers: papers, email: cfg.Email, online: *online,
 		api: &http.Client{Timeout: apiTimeout}}
 	report := a.run(entries)
+	for _, pe := range parseErrs {
+		report.ParseErrors = append(report.ParseErrors, auditParseError{Line: pe.Line, Msg: pe.Msg})
+	}
 
 	if *asJSON {
 		out, err := renderJSON(report)

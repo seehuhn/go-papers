@@ -29,9 +29,9 @@ func TestParseOneEntry(t *testing.T) {
   title = {Probability inequalities},
   year = {1963},
 }`
-	got, err := Parse(strings.NewReader(in))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+	got, errs := Parse(strings.NewReader(in))
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d entries, want 1", len(got))
@@ -58,9 +58,9 @@ func TestParseValueForms(t *testing.T) {
   title = {A study of {SPDEs} in {G}reenland},
   note = {a "quoted" word},
 }`
-	got, err := Parse(strings.NewReader(in))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+	got, errs := Parse(strings.NewReader(in))
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
 	}
 	f := got[0].Entry.Fields
 	want := map[string]string{
@@ -83,9 +83,9 @@ func TestParseStringMacrosAndConcatenation(t *testing.T) {
   journal = jams,
   note = jams # { and more} # vol,
 }`
-	got, err := Parse(strings.NewReader(in))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+	got, errs := Parse(strings.NewReader(in))
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d entries, want 1 (@string is not an entry)", len(got))
@@ -110,9 +110,9 @@ func TestParseBuiltinMonthMacros(t *testing.T) {
 	}
 	for macro, expansion := range want {
 		in := "@article{k,\n  month = " + macro + ",\n}"
-		got, err := Parse(strings.NewReader(in))
-		if err != nil {
-			t.Fatalf("Parse(month = %s): %v", macro, err)
+		got, errs := Parse(strings.NewReader(in))
+		if len(errs) != 0 {
+			t.Fatalf("Parse(month = %s): %v", macro, errs)
 		}
 		if got[0].Entry.Fields["month"] != expansion {
 			t.Errorf("month = %q, want %q", got[0].Entry.Fields["month"], expansion)
@@ -128,9 +128,9 @@ func TestParseUserStringOverridesBuiltinMonthMacro(t *testing.T) {
 @article{k,
   month = mar,
 }`
-	got, err := Parse(strings.NewReader(in))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+	got, errs := Parse(strings.NewReader(in))
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
 	}
 	if got[0].Entry.Fields["month"] != "Custom March" {
 		t.Errorf("month = %q, want %q (user @string should override the built-in)", got[0].Entry.Fields["month"], "Custom March")
@@ -138,15 +138,15 @@ func TestParseUserStringOverridesBuiltinMonthMacro(t *testing.T) {
 }
 
 func TestParseUnknownMacroIsAnError(t *testing.T) {
-	_, err := Parse(strings.NewReader("@article{k,\n  journal = nosuchmacro,\n}"))
-	if err == nil {
+	_, errs := Parse(strings.NewReader("@article{k,\n  journal = nosuchmacro,\n}"))
+	if len(errs) == 0 {
 		t.Fatal("Parse accepted an undefined macro, want an error")
 	}
-	if !strings.Contains(err.Error(), "nosuchmacro") {
-		t.Errorf("error %q should name the macro", err)
+	if !strings.Contains(errs[0].Msg, "nosuchmacro") {
+		t.Errorf("error %q should name the macro", errs[0].Msg)
 	}
-	if !strings.Contains(err.Error(), "line 2") {
-		t.Errorf("error %q should name the line", err)
+	if errs[0].Line != 2 {
+		t.Errorf("Line = %d, want 2", errs[0].Line)
 	}
 }
 
@@ -161,9 +161,9 @@ func TestParseCrossrefInheritance(t *testing.T) {
   year = {2011},
   publisher = {Nobody},
 }`
-	got, err := Parse(strings.NewReader(in))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+	got, errs := Parse(strings.NewReader(in))
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
 	}
 	var child KeyedEntry
 	for _, e := range got {
@@ -183,9 +183,9 @@ func TestParseCrossrefInheritance(t *testing.T) {
 }
 
 func TestParseCrossrefToAMissingParentIsAnError(t *testing.T) {
-	_, err := Parse(strings.NewReader("@inproceedings{child,\n  crossref = {ghost},\n}"))
-	if err == nil || !strings.Contains(err.Error(), "ghost") {
-		t.Errorf("got %v, want an error naming the missing parent", err)
+	_, errs := Parse(strings.NewReader("@inproceedings{child,\n  crossref = {ghost},\n}"))
+	if len(errs) == 0 || !strings.Contains(errs[0].Msg, "ghost") {
+		t.Errorf("got %v, want an error naming the missing parent", errs)
 	}
 }
 
@@ -195,9 +195,9 @@ func TestParseGoldenSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	got, err := Parse(f)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+	got, errs := Parse(f)
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
 	}
 	if len(got) != 6 {
 		t.Fatalf("got %d entries, want 6", len(got))
@@ -210,9 +210,9 @@ func TestParseGoldenSample(t *testing.T) {
 		buf.WriteString(Format(e.Key, e.Entry))
 		buf.WriteString("\n")
 	}
-	again, err := Parse(strings.NewReader(buf.String()))
-	if err != nil {
-		t.Fatalf("re-parsing formatted output: %v", err)
+	again, errs2 := Parse(strings.NewReader(buf.String()))
+	if len(errs2) != 0 {
+		t.Fatalf("re-parsing formatted output: %v", errs2)
 	}
 	if len(again) != len(got) {
 		t.Fatalf("round trip changed the entry count: %d -> %d", len(got), len(again))
@@ -222,5 +222,155 @@ func TestParseGoldenSample(t *testing.T) {
 			t.Errorf("%s: fields changed on round trip:\n%v\n%v",
 				got[i].Key, got[i].Entry.Fields, again[i].Entry.Fields)
 		}
+	}
+}
+
+func TestParseRecoversAfterAMalformedEntry(t *testing.T) {
+	in := `@article{good_one,
+  title = {First},
+  year = {1999},
+}
+@article{broken,
+  journal = nosuchmacro,
+}
+@article{good_two,
+  title = {Second},
+  year = {2001},
+}`
+	got, errs := Parse(strings.NewReader(in))
+
+	if len(got) != 2 || got[0].Key != "good_one" || got[1].Key != "good_two" {
+		keys := make([]string, len(got))
+		for i, e := range got {
+			keys[i] = e.Key
+		}
+		t.Errorf("entries = %v, want [good_one good_two]", keys)
+	}
+	if len(errs) != 1 {
+		t.Fatalf("errs = %v, want exactly one", errs)
+	}
+	if errs[0].Line != 6 {
+		t.Errorf("Line = %d, want 6 (the undefined macro)", errs[0].Line)
+	}
+	if !strings.Contains(errs[0].Msg, "nosuchmacro") {
+		t.Errorf("Msg = %q, should name the macro", errs[0].Msg)
+	}
+}
+
+func TestParseKeepsAChildWhoseCrossrefParentIsMissing(t *testing.T) {
+	in := `@inproceedings{child,
+  title = {A talk},
+  crossref = {ghost},
+}`
+	got, errs := Parse(strings.NewReader(in))
+
+	if len(got) != 1 || got[0].Key != "child" {
+		t.Fatalf("entries = %v, want the child kept", got)
+	}
+	if got[0].Entry.Fields["title"] != "A talk" {
+		t.Errorf("the child's own fields must survive: %v", got[0].Entry.Fields)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0].Msg, "ghost") {
+		t.Errorf("errs = %v, want one error naming the missing parent", errs)
+	}
+}
+
+func TestParseReportsAnUnbalancedBraceInAQuotedValue(t *testing.T) {
+	in := "@article{k,\n  note = \"a } b\",\n  year = {1999},\n}"
+
+	_, errs := Parse(strings.NewReader(in))
+
+	if len(errs) == 0 {
+		t.Fatal("an unbalanced '}' inside a quoted value should be an error")
+	}
+	if errs[0].Line != 2 {
+		t.Errorf("Line = %d, want 2 (where the '}' is)", errs[0].Line)
+	}
+	if !strings.Contains(errs[0].Msg, "}") {
+		t.Errorf("Msg = %q, should name the unbalanced brace", errs[0].Msg)
+	}
+}
+
+func TestParseAcceptsParenthesisDelimitedEntries(t *testing.T) {
+	in := `@article(hoef,
+  author = {Hoeffding, Wassily},
+  title = {Probability inequalities},
+  year = 1963,
+)
+@string(jams = {J. Amer. Math. Soc.})
+@article(k2,
+  journal = jams,
+)`
+	got, errs := Parse(strings.NewReader(in))
+
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2", len(got))
+	}
+	if got[0].Entry.Fields["author"] != "Hoeffding, Wassily" {
+		t.Errorf("author = %q", got[0].Entry.Fields["author"])
+	}
+	if got[1].Entry.Fields["journal"] != "J. Amer. Math. Soc." {
+		t.Errorf("@string in paren form should work too: journal = %q", got[1].Entry.Fields["journal"])
+	}
+}
+
+func TestParseParenEntryIsClosedByParenNotBrace(t *testing.T) {
+	// A '}' does not close a paren-delimited entry; braces inside values
+	// still work, and the entry ends only at ')'.
+	in := "@article(k,\n  title = {Braced {T}itle},\n)"
+
+	got, errs := Parse(strings.NewReader(in))
+
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
+	}
+	if got[0].Entry.Fields["title"] != "Braced {T}itle" {
+		t.Errorf("title = %q", got[0].Entry.Fields["title"])
+	}
+}
+
+func TestParseParenCommentDoesNotSwallowTheNextEntry(t *testing.T) {
+	in := "@comment( ignore all this )\n@article{k,\n  title = {Kept},\n}"
+
+	got, errs := Parse(strings.NewReader(in))
+
+	if len(errs) != 0 {
+		t.Fatalf("Parse: %v", errs)
+	}
+	if len(got) != 1 || got[0].Entry.Fields["title"] != "Kept" {
+		t.Errorf("the entry after a paren comment must survive, got %v", got)
+	}
+}
+
+// TestParseNamesTheLineForUnterminatedInput pins the line numbers of the
+// three truncation errors. These were hand-verified during review; the
+// table keeps the line-tracking invariant in next() honest.
+func TestParseNamesTheLineForUnterminatedInput(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		line int
+		msg  string
+	}{
+		{"entry", "@article{k,\n  title = {T},\n", 1, "unterminated entry"},
+		{"brace", "@article{k,\n  title = {no end\n", 2, "unterminated brace group"},
+		{"quote", "@article{k,\n\n  note = \"no end\n", 3, "unterminated quoted value"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, errs := Parse(strings.NewReader(c.in))
+			if len(errs) == 0 {
+				t.Fatal("want an error")
+			}
+			if errs[0].Line != c.line {
+				t.Errorf("Line = %d, want %d", errs[0].Line, c.line)
+			}
+			if !strings.Contains(errs[0].Msg, c.msg) {
+				t.Errorf("Msg = %q, want it to contain %q", errs[0].Msg, c.msg)
+			}
+		})
 	}
 }

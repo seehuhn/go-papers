@@ -605,3 +605,39 @@ func storeSnapshot(t *testing.T, dir string) string {
 	}
 	return b.String()
 }
+
+func TestAuditReportsUnparseableEntriesAndAuditsTheRest(t *testing.T) {
+	dir := initStore(t, "")
+	guardBases(t)
+	s := openConfiguredStore(t)
+	p := &store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "published",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Hoeffding, Wassily", "title": "Probability inequalities",
+			"journal": "JASA", "year": "1963",
+			"doi": "10.1080/01621459.1963.10500830"}}}
+	if err := s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	bib := filepath.Join(dir, "refs.bib")
+	content := bibtex.Format("hoef", p.Bibtex) + "\n@article{broken,\n  journal = nosuchmacro,\n}\n"
+	if err := os.WriteFile(bib, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "hoeffding_1963") {
+		t.Errorf("the good entry must still be audited:\n%s", out)
+	}
+	if !strings.Contains(out, "nosuchmacro") {
+		t.Errorf("the parse failure must be reported:\n%s", out)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("the report should say the entry was skipped:\n%s", out)
+	}
+}
