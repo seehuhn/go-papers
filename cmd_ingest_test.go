@@ -295,6 +295,51 @@ func TestIngestDOIOverride(t *testing.T) {
 	}
 }
 
+// TestIngestDOIOverrideFillsGapsFromPrism checks that -doi still runs
+// metadata extraction and fills gaps in the drafted entry from the PDF's
+// PRISM packet, the same way the normal identification path does (see
+// TestIngestFillsGapsFromPrism). -doi trusts the given DOI absolutely -
+// there is no text in the fixture body for identification to find - but
+// the file is in hand, so its XMP pages/ISSN must not be forfeited.
+func TestIngestDOIOverrideFillsGapsFromPrism(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefSparseWorkResponse)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+
+	f := filepath.Join(t.TempDir(), "prism-override.pdf")
+	packet := pdfidtest.PrismPacket(t, pdfidtest.PrismNS20, map[string]string{
+		"issn":         "0162-1459",
+		"startingPage": "13",
+		"endingPage":   "30",
+	})
+	pdfidtest.MakePDF(t, f, "", "", nil, nil, pdfidtest.WithXMP(packet)) // no text: -doi must not need it
+
+	err := runIngest([]string{"-doi", "10.1080/01621459.1963.10500830", f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openConfiguredStore(t)
+	p, err := s.Load("hoeffding_1963")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"pages": "13--30",
+		"issn":  "0162-1459",
+	}
+	for k, v := range want {
+		if p.Bibtex.Fields[k] != v {
+			t.Errorf("field %s = %q, want %q from the PRISM packet", k, p.Bibtex.Fields[k], v)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
+		t.Error("file should have been moved into the store")
+	}
+}
+
 func TestIngestUnidentifiable(t *testing.T) {
 	fetchFixtureStore(t)
 	guardBases(t)

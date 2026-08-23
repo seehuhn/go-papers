@@ -77,12 +77,14 @@ type PrismInfo struct {
 	AggregationType string
 }
 
-// The three PRISM Basic models below are deliberate copies of one field
+// The four PRISM Basic models below are deliberate copies of one field
 // set.  go-xmp takes the namespace URI from a struct tag, and a struct
 // tag must be a literal, so the URI is fixed at compile time and one
 // model cannot serve several namespace versions.  Publishers use 2.0,
 // 2.1 and 3.0 interchangeably (Elsevier writes 2.0 to this day), so all
-// three have to be declared.
+// three have to be declared; 1.2 joins them because it is the likeliest
+// version on 1990s-era Wiley files, which is also where legacy SICI DOIs
+// live (see [TestPrismSICIDOIExact]).
 //
 // Keep the field lists identical.  Two guards enforce that, and it takes
 // both:
@@ -160,6 +162,35 @@ type prismBasic30 struct {
 	URL             xmp.Text `xmp:"url"`
 }
 
+// prismBasic12 models the legacy PRISM Basic 1.2 namespace. This is the
+// earliest PRISM version, and the likeliest one on 1990s-era Wiley PDFs
+// - exactly the files that carry SICI DOIs with the unescaped '<' and
+// '>' [TestPrismSICIDOIExact] pins.
+//
+// The 1.2 specification is not available to check its property names
+// against; the tags below mirror prismBasic20's verbatim rather than
+// risk inventing a namespace-specific spelling that silently decodes
+// nothing.  If a 1.2 producer turns up using different property names,
+// this is the model to correct.
+type prismBasic12 struct {
+	_ xmp.Namespace `xmp:"http://prismstandard.org/namespaces/1.2/basic/"`
+	_ xmp.Prefix    `xmp:"prism"`
+
+	DOI             xmp.Text `xmp:"doi"`
+	PublicationName xmp.Text `xmp:"publicationName"`
+	ISSN            xmp.Text `xmp:"issn"`
+	EISSN           xmp.Text `xmp:"eIssn"`
+	Volume          xmp.Text `xmp:"volume"`
+	Number          xmp.Text `xmp:"number"`
+	IssueIdentifier xmp.Text `xmp:"issueIdentifier"`
+	StartingPage    xmp.Text `xmp:"startingPage"`
+	EndingPage      xmp.Text `xmp:"endingPage"`
+	PageRange       xmp.Text `xmp:"pageRange"`
+	CoverDate       xmp.Text `xmp:"coverDate"`
+	AggregationType xmp.Text `xmp:"aggregationType"`
+	URL             xmp.Text `xmp:"url"`
+}
+
 // prismValues is the namespace-independent carrier for the values read
 // from any of the PRISM Basic models.  It has the same field sequence as
 // the models but no tags, so the three models convert to it directly (Go
@@ -205,14 +236,17 @@ type pdfxCustom struct {
 	DOI xmp.Text `xmp:"doi"`
 }
 
-// prismReaders decodes a packet with each PRISM Basic model in turn.
-// The order is the order [readPrismBasic] tries them: 2.1 (the version
-// the specification settled on), then 2.0 (still the most common in
-// article PDFs), then 3.0.
+// prismReaders decodes a packet with each PRISM Basic model in turn. The
+// order is the precedence [readPrismBasic] merges them in: 2.1 (the
+// version the specification settled on), then 2.0 (still the most common
+// in article PDFs), then 3.0, then 1.2 (the legacy version, least likely
+// to appear alongside the others). Precedence matters only when two
+// versions both carry the same field; see [readPrismBasic].
 var prismReaders = []func(*xmp.Packet) prismValues{
 	func(p *xmp.Packet) prismValues { var m prismBasic21; _ = p.Get(&m); return prismValues(m) },
 	func(p *xmp.Packet) prismValues { var m prismBasic20; _ = p.Get(&m); return prismValues(m) },
 	func(p *xmp.Packet) prismValues { var m prismBasic30; _ = p.Get(&m); return prismValues(m) },
+	func(p *xmp.Packet) prismValues { var m prismBasic12; _ = p.Get(&m); return prismValues(m) },
 }
 
 // readPrism returns the publisher metadata of an XMP packet, or nil when
@@ -249,18 +283,60 @@ func readPrism(p *xmp.Packet) *PrismInfo {
 }
 
 // readPrismBasic decodes the PRISM Basic properties of a packet, trying
-// the namespace versions in turn and taking the first that yields any
-// populated field.  ok is false when no version yielded anything.
+// every namespace version and merging the results field by field: for
+// each field, the first version in [prismReaders]'s precedence order to
+// carry a non-empty value wins. A document that states PRISM 2.1 with a
+// DOI but no pages, and PRISM 3.0 with pages but no DOI, therefore yields
+// both, rather than whichever namespace happens to match first supplying
+// every field (including the ones it left empty) on its own. ok is false
+// when no version yielded anything.
 //
 // As in [readPrism], the error from Packet.Get is ignored on purpose: a
 // packet with one malformed PRISM property must still give up the rest.
 func readPrismBasic(p *xmp.Packet) (prismValues, bool) {
+	var merged prismValues
+	found := false
 	for _, read := range prismReaders {
-		if v := read(p); !v.isZero() {
-			return v, true
+		v := read(p)
+		if v.isZero() {
+			continue
 		}
+		found = true
+		merged = merged.mergeFrom(v)
 	}
-	return prismValues{}, false
+	return merged, found
+}
+
+// mergeFrom fills every field of v that is empty from the corresponding
+// field of other, leaving a field v already carries untouched. It is the
+// per-field counterpart of [firstNonEmpty], applied at the typed
+// xmp.Text stage that [readPrismBasic] merges at, before [trimXMP]
+// reduces each field to a plain string.
+func (v prismValues) mergeFrom(other prismValues) prismValues {
+	v.DOI = firstNonEmptyText(v.DOI, other.DOI)
+	v.PublicationName = firstNonEmptyText(v.PublicationName, other.PublicationName)
+	v.ISSN = firstNonEmptyText(v.ISSN, other.ISSN)
+	v.EISSN = firstNonEmptyText(v.EISSN, other.EISSN)
+	v.Volume = firstNonEmptyText(v.Volume, other.Volume)
+	v.Number = firstNonEmptyText(v.Number, other.Number)
+	v.IssueIdentifier = firstNonEmptyText(v.IssueIdentifier, other.IssueIdentifier)
+	v.StartingPage = firstNonEmptyText(v.StartingPage, other.StartingPage)
+	v.EndingPage = firstNonEmptyText(v.EndingPage, other.EndingPage)
+	v.PageRange = firstNonEmptyText(v.PageRange, other.PageRange)
+	v.CoverDate = firstNonEmptyText(v.CoverDate, other.CoverDate)
+	v.AggregationType = firstNonEmptyText(v.AggregationType, other.AggregationType)
+	v.URL = firstNonEmptyText(v.URL, other.URL)
+	return v
+}
+
+// firstNonEmptyText returns a if it carries a value, otherwise b. Unlike
+// [firstNonEmpty], it compares typed xmp.Text values via IsZero rather
+// than plain strings, since [mergeFrom] runs before [trimXMP] applies.
+func firstNonEmptyText(a, b xmp.Text) xmp.Text {
+	if !a.IsZero() {
+		return a
+	}
+	return b
 }
 
 // isZero reports whether none of the properties that reach [PrismInfo]

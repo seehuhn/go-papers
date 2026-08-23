@@ -47,9 +47,10 @@ func WithXMP(p *xmp.Packet) Option {
 }
 
 // The XMP namespace URIs the PRISM fixtures use.  Publishers embed all
-// three PRISM Basic versions in the wild; PDFXNS is the Adobe "custom
+// four PRISM Basic versions in the wild; PDFXNS is the Adobe "custom
 // document properties" namespace Springer and others use for pdfx:doi.
 const (
+	PrismNS12 = "http://prismstandard.org/namespaces/1.2/basic/"
 	PrismNS20 = "http://prismstandard.org/namespaces/basic/2.0/"
 	PrismNS21 = "http://prismstandard.org/namespaces/basic/2.1/"
 	PrismNS30 = "http://prismstandard.org/namespaces/basic/3.0/"
@@ -75,7 +76,7 @@ func SetProperties(t *testing.T, p *xmp.Packet, ns string, props map[string]stri
 }
 
 // PrismPacket returns an XMP packet carrying the given PRISM Basic
-// properties in namespace ns (one of [PrismNS20], [PrismNS21],
+// properties in namespace ns (one of [PrismNS12], [PrismNS20], [PrismNS21],
 // [PrismNS30]).  The keys are bare PRISM property names, e.g.
 // map[string]string{"doi": "10.1234/x", "volume": "12"}.
 func PrismPacket(t *testing.T, ns string, props map[string]string) *xmp.Packet {

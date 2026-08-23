@@ -56,6 +56,7 @@ func TestPrismModelTagsAgree(t *testing.T) {
 		{"prismBasic21", reflect.TypeFor[prismBasic21](), pdfidtest.PrismNS21},
 		{"prismBasic20", reflect.TypeFor[prismBasic20](), pdfidtest.PrismNS20},
 		{"prismBasic30", reflect.TypeFor[prismBasic30](), pdfidtest.PrismNS30},
+		{"prismBasic12", reflect.TypeFor[prismBasic12](), pdfidtest.PrismNS12},
 	}
 
 	var want []xmpModelField
@@ -268,7 +269,7 @@ func TestPrismDOINormalization(t *testing.T) {
 // is part of the struct tag, so each version needs its own model; this
 // test is what keeps the three in step.
 func TestPrismNamespaceVersions(t *testing.T) {
-	for _, ns := range []string{pdfidtest.PrismNS20, pdfidtest.PrismNS21, pdfidtest.PrismNS30} {
+	for _, ns := range []string{pdfidtest.PrismNS12, pdfidtest.PrismNS20, pdfidtest.PrismNS21, pdfidtest.PrismNS30} {
 		t.Run(ns, func(t *testing.T) {
 			packet := pdfidtest.PrismPacket(t, ns, map[string]string{
 				"doi":             "10.1234/x",
@@ -289,6 +290,56 @@ func TestPrismNamespaceVersions(t *testing.T) {
 				t.Errorf("Volume = %q, want 12", info.Volume)
 			}
 		})
+	}
+}
+
+// TestPrismMergeAcrossVersions checks that readPrism merges field-wise
+// across the namespace versions rather than taking whichever one matches
+// first: a packet carrying PRISM 2.1 with a DOI but no pages, and PRISM
+// 3.0 with pages but no DOI, must yield both. Before the merge, 2.1 comes
+// first in [prismReaders], so its zero pages would have won outright and
+// the 3.0 pages would have been discarded.
+func TestPrismMergeAcrossVersions(t *testing.T) {
+	packet := pdfidtest.PrismPacket(t, pdfidtest.PrismNS21, map[string]string{
+		"doi": "10.1234/from21",
+	})
+	pdfidtest.SetProperties(t, packet, pdfidtest.PrismNS30, map[string]string{
+		"startingPage": "10",
+		"endingPage":   "20",
+	})
+
+	info := readPrism(packet)
+	if info == nil {
+		t.Fatal("readPrism = nil, want the merged PRISM metadata")
+	}
+	if info.DOI != "10.1234/from21" {
+		t.Errorf("DOI = %q, want the 2.1 value 10.1234/from21", info.DOI)
+	}
+	if info.Pages != "10--20" {
+		t.Errorf("Pages = %q, want the 3.0 pages 10--20 merged in", info.Pages)
+	}
+}
+
+// TestPrismMergeIncludesLegacy12 checks that PRISM 1.2 participates in the
+// same field-wise merge as the other three versions: a document carrying
+// 1.2's publicationName and 2.1's doi must yield both.
+func TestPrismMergeIncludesLegacy12(t *testing.T) {
+	packet := pdfidtest.PrismPacket(t, pdfidtest.PrismNS12, map[string]string{
+		"publicationName": "Journal of Testing",
+	})
+	pdfidtest.SetProperties(t, packet, pdfidtest.PrismNS21, map[string]string{
+		"doi": "10.1234/legacy",
+	})
+
+	info := readPrism(packet)
+	if info == nil {
+		t.Fatal("readPrism = nil, want the merged PRISM metadata")
+	}
+	if info.DOI != "10.1234/legacy" {
+		t.Errorf("DOI = %q, want the 2.1 value 10.1234/legacy", info.DOI)
+	}
+	if info.PublicationName != "Journal of Testing" {
+		t.Errorf("PublicationName = %q, want the 1.2 value", info.PublicationName)
 	}
 }
 

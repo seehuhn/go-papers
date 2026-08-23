@@ -411,7 +411,16 @@ func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (
 		if ref.Kind != sources.RefDOI {
 			return "", 0, fmt.Errorf("-doi %q is not a DOI", doiOverride)
 		}
-		key, err := in.ingestDOI(f, trimDOI(ref.DOI), nil)
+		// -doi trusts the given DOI absolutely: no identification, no
+		// second-guessing. But the file is in hand, so its XMP metadata
+		// is still extracted and used to fill gaps in the drafted entry,
+		// the same way the normal path does; only the DOI/arXiv tiers of
+		// pdfid.Identify are skipped, not the extraction underneath them.
+		doc, err := pdfid.Extract(f.path, ingestPages)
+		if err != nil {
+			return "", 0, err
+		}
+		key, err := in.ingestDOI(f, trimDOI(ref.DOI), doc.Prism)
 		return key, 0, err
 
 	case arxivOverride != "":
