@@ -109,6 +109,11 @@ func fetchFixtureStore(t *testing.T) string {
 	return dir
 }
 
+// overrideBases points the five source clients at test servers. An
+// empty string does NOT keep the production URL: the service is pointed
+// at a server that fails the test on contact. No test may reach a live
+// API, and this helper is where that rule is enforced rather than
+// remembered.
 func overrideBases(t *testing.T, crossref, arxiv, unpaywall, zbmath, dblp string) {
 	t.Helper()
 	saved := []struct {
@@ -121,21 +126,21 @@ func overrideBases(t *testing.T, crossref, arxiv, unpaywall, zbmath, dblp string
 			*s.p = s.old
 		}
 	})
-	if crossref != "" {
-		crossrefBase = crossref
+	refuse := ""
+	pick := func(url string) string {
+		if url != "" {
+			return url
+		}
+		if refuse == "" {
+			refuse = refusingServer(t)
+		}
+		return refuse
 	}
-	if arxiv != "" {
-		arxivBase = arxiv
-	}
-	if unpaywall != "" {
-		unpaywallBase = unpaywall
-	}
-	if zbmath != "" {
-		zbmathBase = zbmath
-	}
-	if dblp != "" {
-		dblpBase = dblp
-	}
+	crossrefBase = pick(crossref)
+	arxivBase = pick(arxiv)
+	unpaywallBase = pick(unpaywall)
+	zbmathBase = pick(zbmath)
+	dblpBase = pick(dblp)
 }
 
 func TestFetchDOIWithOA(t *testing.T) {
@@ -941,5 +946,18 @@ func TestFetchPDFURLUnidentifiedHandsOffToFetch(t *testing.T) {
 	}
 	if strings.Contains(msg, "paper ingest") {
 		t.Errorf("must not suggest ingesting a file that no longer exists, got:\n%s", msg)
+	}
+}
+
+func TestOverrideBasesRefusesUnspecifiedServices(t *testing.T) {
+	overrideBases(t, "http://example.test/cr", "", "", "", "")
+
+	for name, base := range map[string]string{
+		"arxiv": arxivBase, "unpaywall": unpaywallBase,
+		"zbmath": zbmathBase, "dblp": dblpBase,
+	} {
+		if !strings.HasPrefix(base, "http://127.0.0.1") {
+			t.Errorf("%s base = %q; an unspecified service must refuse locally, not point at production", name, base)
+		}
 	}
 }
