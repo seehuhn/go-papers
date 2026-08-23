@@ -157,9 +157,10 @@ type ingestFile struct {
 }
 
 // downloaded reports whether the file was fetched from a URL rather than
-// found on the local filesystem.
+// found on the local filesystem. A zero-value ingestFile is not a
+// download: only an explicitly recorded non-"ingest" source counts.
 func (f ingestFile) downloaded() bool {
-	return f.source != ingestSource
+	return f.source != "" && f.source != ingestSource
 }
 
 // logAction is the entry-log action for the command that produced this
@@ -169,6 +170,16 @@ func (f ingestFile) logAction() string {
 		return "fetch"
 	}
 	return "ingest"
+}
+
+// displayName is what user-facing messages call the file: the URL it
+// was downloaded from, or its path for a local file. A download's temp
+// path is already gone by the time anyone reads the message.
+func (f ingestFile) displayName() string {
+	if f.downloaded() {
+		return f.source
+	}
+	return f.path
 }
 
 // origin describes where the file came from, for the entry log. A
@@ -285,7 +296,7 @@ func (in *ingester) ingestIntoOne(key string, f ingestFile) (int, error) {
 	if _, err := attachFile(in.store, p, f.path, filename, f.source, in.now); err != nil {
 		return id.Tier, err
 	}
-	fmt.Printf("ingested %s -> %s\n", f.path, p.Key)
+	fmt.Printf("ingested %s -> %s\n", f.displayName(), p.Key)
 	return id.Tier, nil
 }
 
@@ -374,7 +385,7 @@ func (in *ingester) ingestBatch(files []ingestFile, statFailures []ingestFailure
 			failures = append(failures, ingestFailure{path: f.path, err: err})
 			continue
 		}
-		fmt.Printf("ingested %s -> %s\n", f.path, key)
+		fmt.Printf("ingested %s -> %s\n", f.displayName(), key)
 	}
 	if len(failures) == 0 {
 		return nil

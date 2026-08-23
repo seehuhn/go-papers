@@ -42,8 +42,14 @@ type Store struct {
 // caller; this package has no opinion on where a store lives.
 func Open(root string) (*Store, error) {
 	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("paper store directory %q does not exist", root)
+	case err != nil:
+		// A permissions problem is not absence; keep the cause visible.
+		return nil, fmt.Errorf("paper store directory %q: %w", root, err)
+	case !info.IsDir():
+		return nil, fmt.Errorf("paper store %q is not a directory", root)
 	}
 
 	if err := CheckMarker(root); err != nil {

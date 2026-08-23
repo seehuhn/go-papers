@@ -123,3 +123,30 @@ func writeMarkerVersion(t *testing.T, dir string, version int) {
 		t.Fatalf("writing the marker: %v", err)
 	}
 }
+
+func TestOpenReportsAPermissionProblemAsItself(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "store")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMarker(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+
+	_, err := Open(root)
+
+	if err == nil {
+		t.Fatal("Open through an unreadable parent should fail")
+	}
+	if strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("a permission problem is not absence; err = %v", err)
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("the underlying cause should be preserved; err = %v", err)
+	}
+}

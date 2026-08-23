@@ -781,11 +781,21 @@ func TestFetchPDFURLInto(t *testing.T) {
 	guardBases(t)
 	s := saveHoeffdingEntry(t)
 
-	if err := runFetch([]string{"-into", "hoeffding_1963", url}); err != nil {
-		t.Fatal(err)
-	}
+	out := captureStdout(t, func() {
+		if err := runFetch([]string{"-into", "hoeffding_1963", url}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
 		t.Error("the download should have been attached as published.pdf")
+	}
+	// The success line names the URL the file came from, not the
+	// temporary download path, which is already gone.
+	if !strings.Contains(out, url) {
+		t.Errorf("output should name the URL:\n%s", out)
+	}
+	if strings.Contains(out, "paper-fetch-") {
+		t.Errorf("output should not leak the deleted temp path:\n%s", out)
 	}
 	p, _ := s.Load("hoeffding_1963")
 	if p.Holdings != "published" {
