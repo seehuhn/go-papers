@@ -147,7 +147,7 @@ func TestSearchCandidateOrderIsDeterministicOnTies(t *testing.T) {
 		fmt.Fprintf(w, `{"result":{"hits":{"hit":[{"info":{"title":%q,"year":"2001"}}]}}}`, title)
 	}))
 	t.Cleanup(dblpSrv.Close)
-	overrideBases(t, crossrefSrv.URL, refusingServer(t), refusingServer(t), zbSrv.URL, dblpSrv.URL)
+	overrideBases(t, crossrefSrv.URL, refusingServer(t), refusingServer(t), zbSrv.URL, dblpSrv.URL, "")
 
 	a := &auditor{api: crossrefSrv.Client()}
 	e := bibtex.KeyedEntry{Entry: bibtex.Entry{Type: "misc",
@@ -188,7 +188,7 @@ func TestSearchCandidateTiebreakerIsTotalOnSourceAndScore(t *testing.T) {
 		fmt.Fprintf(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, emptyList.URL, refusingServer(t), refusingServer(t), zbSrv.URL, emptyList.URL)
+	overrideBases(t, emptyList.URL, refusingServer(t), refusingServer(t), zbSrv.URL, emptyList.URL, "")
 
 	a := &auditor{api: zbSrv.Client()}
 	e := bibtex.KeyedEntry{Entry: bibtex.Entry{Type: "misc",

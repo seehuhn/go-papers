@@ -38,15 +38,16 @@ func init() {
 		"fetch", "resolve a reference online and download what is scriptable", runFetch})
 }
 
-// Base URLs of the online services fetch talks to. These are variables
-// rather than constants so that tests can point them at httptest servers;
-// nothing else ever changes them.
+// Base URLs of the online services fetch and audit talk to. These are
+// variables rather than constants so that tests can point them at httptest
+// servers; nothing else ever changes them.
 var (
 	crossrefBase      = "https://api.crossref.org"
 	arxivBase         = "https://export.arxiv.org"
 	unpaywallBase     = "https://api.unpaywall.org"
 	zbmathBase        = "https://api.zbmath.org"
 	dblpBase          = "https://dblp.org"
+	handleBase        = "https://doi.org"
 	arxivDownloadBase = "https://arxiv.org"
 )
 

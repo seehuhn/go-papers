@@ -230,7 +230,11 @@ the authority for anything it holds, since a clean entry has already
 passed `paper check`. A reference the store does not hold is always
 checked against the network (Crossref, arXiv, zbMATH, DBLP); `-online`
 does not gate that — it only adds re-verification of store-held entries
-against their sources too.
+against their sources too. A DOI Crossref does not recognise is not
+necessarily invented: Crossref only indexes Crossref-registered DOIs, so a
+DataCite-registered one (Zenodo, figshare, many arXiv-issued DOIs) is
+still confirmed if the DOI handle system resolves it, since that answers
+existence independent of which registrar holds the metadata.
 
 Each reference gets one of four verdicts: `confirmed` (matched a clean
 store entry, or verified online), `unverified` (a source returned a

@@ -55,7 +55,7 @@ func guardBases(t *testing.T) {
 		t.Errorf("no online service may be contacted here: %s", r.URL)
 	}))
 	t.Cleanup(srv.Close)
-	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL)
+	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL, "")
 }
 
 // assertUntouched checks that an entry gained nothing from a run that was
@@ -168,7 +168,7 @@ func TestIngestBatchCreatesEntries(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse) // always the Hoeffding record
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
 	f := filepath.Join(t.TempDir(), "paper.pdf")
 	makeIngestPDF(t, f, "Probability inequalities", "10.1080/01621459.1963.10500830")
 
@@ -218,7 +218,7 @@ func TestIngestFillsGapsFromPrism(t *testing.T) {
 		io.WriteString(w, crossrefSparseWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
 
 	f := filepath.Join(t.TempDir(), "prism.pdf")
 	packet := pdfidtest.PrismPacket(t, pdfidtest.PrismNS20, map[string]string{
@@ -267,7 +267,7 @@ func TestIngestDOIOverride(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
 	f := filepath.Join(t.TempDir(), "scan.pdf")
 	makeIngestPDF(t, f, "", "") // no text, unidentifiable on its own
 
@@ -317,7 +317,7 @@ func TestIngestBatchPartialFailure(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "scan.pdf")
 	good := filepath.Join(dir, "paper.pdf")
@@ -363,7 +363,7 @@ func TestIngestBatchSurvivesStatFailure(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
 
 	good := filepath.Join(t.TempDir(), "good.pdf")
 	makeIngestPDF(t, good, "Probability inequalities", "10.1080/01621459.1963.10500830")
@@ -398,7 +398,7 @@ func TestIngestBatchArxiv(t *testing.T) {
 		t.Errorf("ingest must not download anything: %s", r.URL)
 	}))
 	t.Cleanup(guardSrv.Close)
-	overrideBases(t, guardSrv.URL, arxivSrv.URL, "", "", "")
+	overrideBases(t, guardSrv.URL, arxivSrv.URL, "", "", "", "")
 	savedDL := arxivDownloadBase
 	arxivDownloadBase = guardSrv.URL
 	t.Cleanup(func() { arxivDownloadBase = savedDL })

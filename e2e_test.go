@@ -181,7 +181,7 @@ func TestEndToEndWorkflow(t *testing.T) {
 		io.WriteString(w, arxivResponseNoDOI)
 	}))
 	t.Cleanup(arxivSrv.Close)
-	overrideBases(t, "", arxivSrv.URL, "", "", "")
+	overrideBases(t, "", arxivSrv.URL, "", "", "", "")
 	savedDL := arxivDownloadBase
 	arxivDownloadBase = pdfSrv.URL
 	t.Cleanup(func() { arxivDownloadBase = savedDL })

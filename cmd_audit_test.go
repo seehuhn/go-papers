@@ -54,7 +54,7 @@ func TestAuditConfirmsAResolvableDOI(t *testing.T) {
 	}))
 	t.Cleanup(crossrefSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{hoef,
@@ -103,7 +103,7 @@ func TestAuditReportsNotFoundWhenNothingMatches(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{ghost,
@@ -139,7 +139,7 @@ func TestAuditReportsUnverifiedWithCandidates(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, near.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, near.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{giles,
@@ -179,7 +179,7 @@ func TestAuditOnlineRechecksStoreEntries(t *testing.T) {
 	}))
 	t.Cleanup(crossrefSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte("@article{h,\n  doi = {10.1080/01621459.1963.10500830},\n"+
@@ -218,7 +218,7 @@ func TestAuditOnlineNeverDemotesAStoreConfirmedEntry(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, refuse, refuse)
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte("@article{h,\n  doi = {10.1080/01621459.1963.10500830},\n"+
@@ -268,7 +268,7 @@ func TestAuditConfirmsWhenTitleClearsBarAndCorroborates(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{huber,
@@ -307,7 +307,7 @@ func TestAuditUnverifiedWhenTitleClearsBarButDoesNotCorroborate(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{smith,
@@ -343,7 +343,7 @@ func TestAuditDOILookupFailureIsUnchecked(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, refuse, refuse)
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{d,
@@ -369,6 +369,137 @@ func TestAuditDOILookupFailureIsUnchecked(t *testing.T) {
 	}
 }
 
+// TestAuditConfirmsDOIViaHandleWhenCrossrefMisses is the DataCite case: a
+// DOI Crossref does not know about (Zenodo, figshare, many arXiv-issued
+// DOIs) but which the handle system resolves fine. Existence and metadata
+// are different questions, and the handle system answers the first one
+// independent of registrar.
+func TestAuditConfirmsDOIViaHandleWhenCrossrefMisses(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	handleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"responseCode":1,"handle":"10.5281/zenodo.1234567"}`)
+	}))
+	t.Cleanup(handleSrv.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, handleSrv.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@misc{zen,
+  author = {Someone, C.},
+  title = {A dataset Crossref has never heard of},
+  year = {2021},
+  doi = {10.5281/zenodo.1234567},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "confirmed" {
+		t.Errorf("Existence = %q, want confirmed (the handle system resolved the DOI)", r.Entries[0].Existence)
+	}
+}
+
+// TestAuditDOIUnknownEverywhereFallsToSearch checks that when both
+// Crossref and the handle system say a DOI does not exist, verify falls
+// through to the ordinary search ladder rather than trusting the DOI.
+func TestAuditDOIUnknownEverywhereFallsToSearch(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/works/") {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, `{"message":{"items":[]}}`)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	handleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"responseCode":100,"handle":"10.1000/bogus"}`)
+	}))
+	t.Cleanup(handleSrv.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, emptyList.URL, emptyList.URL, handleSrv.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{bogus,
+  author = {Nobody, D.},
+  title = {A DOI that resolves nowhere at all},
+  journal = {J. Nothing},
+  year = {2019},
+  doi = {10.1000/bogus},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "notFound" {
+		t.Errorf("Existence = %q, want notFound (neither crossref nor the handle system, nor search, knows this DOI)", r.Entries[0].Existence)
+	}
+}
+
+// TestAuditDOICrossrefMissHandleDownIsUnchecked mirrors
+// TestAuditDOILookupFailureIsUnchecked for the handle fallback: when
+// Crossref 404s and the handle system itself cannot be reached, that is
+// a source being down, not proof the paper does not exist.
+func TestAuditDOICrossrefMissHandleDownIsUnchecked(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	handleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "handle system is down")
+	}))
+	t.Cleanup(handleSrv.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, handleSrv.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{downhandle,
+  author = {Someone, E.},
+  title = {A paper whose handle lookup also fails},
+  journal = {J. Whatever},
+  year = {2020},
+  doi = {10.1000/downhandle},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence != "unchecked" {
+		t.Errorf("Existence = %q, want unchecked (the handle system being down is not proof the paper does not exist)", r.Entries[0].Existence)
+	}
+}
+
 func TestAuditAllSearchSourcesDownIsUnchecked(t *testing.T) {
 	dir := initStore(t, "test@example.org")
 	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +508,7 @@ func TestAuditAllSearchSourcesDownIsUnchecked(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, down.URL, down.URL)
+	overrideBases(t, down.URL, refuse, refuse, down.URL, down.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{e,
@@ -411,7 +542,7 @@ func TestAuditConfirmsViaArxivID(t *testing.T) {
 	}))
 	t.Cleanup(arxivSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, refuse, arxivSrv.URL, refuse, refuse, refuse)
+	overrideBases(t, refuse, arxivSrv.URL, refuse, refuse, refuse, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@misc{voss,
@@ -487,7 +618,7 @@ func TestAuditNeverWritesToTheStore(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte("@article{k,\n  title = {Nothing},\n  year = {1999},\n}"), 0o644)
 	before := storeSnapshot(t, dir)
@@ -525,7 +656,7 @@ func TestAuditStoreHeldDraftIsNeverCalledHallucinated(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(bibForPaper(p)), 0o644)
@@ -657,7 +788,7 @@ func TestAuditOnlineDownedSourceIsNotADisagreement(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, refuse, refuse)
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
 	bib := filepath.Join(dir, "refs.bib")
 	if err := os.WriteFile(bib, []byte(bibtex.Format("hoef", p.Bibtex)), 0o644); err != nil {
 		t.Fatal(err)
@@ -687,7 +818,7 @@ func TestAuditReportsDuplicateCitationKeys(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
 	bib := filepath.Join(dir, "refs.bib")
 	content := "@misc{twice,\n  title = {First use},\n}\n" +
 		"@misc{once,\n  title = {Fine},\n}\n" +

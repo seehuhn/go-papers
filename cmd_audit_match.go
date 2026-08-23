@@ -182,7 +182,24 @@ func (a *auditor) verify(e bibtex.KeyedEntry) (string, []auditCandidate) {
 		switch _, err := a.crossref().Work(doi); {
 		case err == nil:
 			return "confirmed", nil
-		case !errors.Is(err, sources.ErrNotFound):
+		case errors.Is(err, sources.ErrNotFound):
+			// Crossref only knows about Crossref-registered DOIs. A DOI
+			// registered elsewhere (DataCite: Zenodo, figshare, many
+			// arXiv-issued DOIs) 404s here even though it exists, so
+			// existence is checked against the DOI handle system instead
+			// — universal across registrars, though it answers existence
+			// only, not metadata. Handle down or unreachable: a source
+			// being down is not proof the paper does not exist, so fall
+			// to "unchecked" rather than through to search.
+			switch exists, herr := a.handle().Exists(doi); {
+			case herr != nil:
+				return "unchecked", nil
+			case exists:
+				return "confirmed", nil
+			}
+			// Neither Crossref nor the handle system knows this DOI:
+			// fall through to the arXiv/search ladder below.
+		default:
 			// The source is down, not the paper missing. Saying "not found"
 			// here would accuse a real paper of being invented.
 			return "unchecked", nil
@@ -309,8 +326,8 @@ func corroboratesCandidate(e bibtex.Entry, c sources.Candidate) bool {
 	return strings.Contains(strings.ToLower(c.Authors[0]), strings.ToLower(surname))
 }
 
-// crossref, arxiv, zbmath and dblp return clients for this run, following
-// the constructor pattern in cmd_fetch.go.
+// crossref, arxiv, zbmath, dblp and handle return clients for this run,
+// following the constructor pattern in cmd_fetch.go.
 func (a *auditor) crossref() *sources.Crossref {
 	return &sources.Crossref{BaseURL: crossrefBase, Client: a.api, Email: a.email}
 }
@@ -325,4 +342,8 @@ func (a *auditor) zbmath() *sources.ZbMath {
 
 func (a *auditor) dblp() *sources.DBLP {
 	return &sources.DBLP{BaseURL: dblpBase, Client: a.api}
+}
+
+func (a *auditor) handle() *sources.Handle {
+	return &sources.Handle{BaseURL: handleBase, Client: a.api}
 }
