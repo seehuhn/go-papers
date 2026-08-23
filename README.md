@@ -89,8 +89,7 @@ synced between your machines (e.g. via syncthing).
 
 ## Commands
 
-Seven commands are implemented so far (`audit` is planned but not yet
-built).
+Eight commands are implemented so far.
 
 ### `paper help`
 
@@ -217,6 +216,37 @@ separated by blank lines.
 
 ```bash
 $ paper bib -all
+```
+
+### `paper audit [-online] [-json] <refs.bib>`
+
+Checks a bibliography file — the kind an agent hands off after writing a
+paper — against reality, without touching the store. Every entry is
+matched against the store by DOI, then arXiv ID, then title; a match
+against a `clean` store entry is diffed field by field, and the store is
+the authority for anything it holds, since a clean entry has already
+passed `paper check`. What the store lacks falls back to the network
+(Crossref, arXiv, zbMATH, DBLP), unless `-online` is given, in which case
+even store-held entries are re-verified against their sources too.
+
+Each reference gets one of three verdicts: `confirmed` (matched a clean
+store entry, or verified online), `unverified` (a source returned a
+plausible but not clearly matching candidate), or `notFound` (no source
+returned anything — likely a hallucinated reference). `-json` prints the
+full report as JSON instead of prose.
+
+```
+$ paper audit refs.bib
+3 references: 1 confirmed, 1 unverified, 1 not found, 0 not checked
+
+Not found:
+ghost: no source returned any candidate — likely hallucinated
+
+Unverified:
+maybe:
+  0.86  Jones, "Adaptive methods", 2011  [crossref]
+
+Confirmed: hoef -> hoeffding_1963
 ```
 
 ## Agent rule
