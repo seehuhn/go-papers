@@ -76,7 +76,7 @@ func TestSaveIsAtomic(t *testing.T) {
 func TestKeysSkipsJunk(t *testing.T) {
 	s := testStore(t)
 	os.MkdirAll(filepath.Join(s.Root, "inbox"), 0o755) // no paper.json
-	os.WriteFile(filepath.Join(s.Root, "config.json"), []byte("{}"), 0o644)
+	WriteMarker(s.Root)                                // the store marker is a file, not a paper
 	p := &Paper{Key: "b_2001", Status: "draft", Holdings: "none",
 		Bibtex: bibtex.Entry{Type: "misc", Fields: map[string]string{}}}
 	s.Save(p)
@@ -120,31 +120,5 @@ func TestLoadRejectsUnknownMembers(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "absract") {
 		t.Errorf("error should mention the unknown member %q: %v", "absract", err)
-	}
-}
-
-func TestOpenResolution(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("PAPER_STORE", dir)
-	s, err := Open("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Root != dir {
-		t.Errorf("Root = %q, want %q", s.Root, dir)
-	}
-	if _, err := Open(filepath.Join(dir, "missing")); err == nil {
-		t.Error("expected error for missing store dir")
-	}
-}
-
-func TestOpenUnconfigured(t *testing.T) {
-	t.Setenv("PAPER_STORE", "")
-	_, err := Open("")
-	if err == nil {
-		t.Fatal("expected error when no store is configured")
-	}
-	if !strings.Contains(err.Error(), "PAPER_STORE") {
-		t.Errorf("error %q should mention PAPER_STORE", err)
 	}
 }

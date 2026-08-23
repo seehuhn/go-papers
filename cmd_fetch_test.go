@@ -105,13 +105,7 @@ func gzipTarballBytes(t *testing.T) []byte {
 
 func fetchFixtureStore(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("PAPER_STORE", dir)
-	err := os.WriteFile(filepath.Join(dir, "config.json"),
-		[]byte(`{"email": "test@example.org"}`+"\n"), 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := initStore(t, "test@example.org")
 	return dir
 }
 
@@ -164,7 +158,7 @@ func TestFetchDOIWithOA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("hoeffding_1963")
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +192,7 @@ func TestFetchDOIWithoutOA(t *testing.T) {
 			t.Errorf("error should mention %q, got:\n%s", want, err)
 		}
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("hoeffding_1963")
 	if err != nil || p.Holdings != "none" {
 		t.Error("the metadata-only draft entry must still have been created")
@@ -228,7 +222,7 @@ func TestFetchArxiv(t *testing.T) {
 	if err := runFetch([]string{"arXiv:2412.05039v2"}); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("voss_2024")
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +280,7 @@ func TestFetchArxivEntryPassesCheck(t *testing.T) {
 	if err := runFetch([]string{"arXiv:2412.05039v2"}); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("voss_2024")
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +324,7 @@ func TestFetchArxivPDFFailureReportsContext(t *testing.T) {
 			t.Errorf("error should mention %q, got:\n%s", want, err)
 		}
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("voss_2024")
 	if err != nil || p.Holdings != "none" {
 		t.Errorf("the draft entry must survive the failed download: %+v, %v", p, err)
@@ -342,7 +336,7 @@ func TestFetchArxivPDFFailureReportsContext(t *testing.T) {
 // published DOI must not gain a second entry via its preprint.
 func TestFetchArxivDuplicateDOI(t *testing.T) {
 	fetchFixtureStore(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	err := s.Save(&store.Paper{Key: "voss_2024", Status: "clean", Holdings: "published",
 		DOI: "10.1234/example.doi",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -387,10 +381,7 @@ func TestAttachDownloadNeverReturnsNilPaper(t *testing.T) {
 
 	newFetcher := func(t *testing.T) *fetcher {
 		t.Helper()
-		s, err := store.Open("")
-		if err != nil {
-			t.Fatal(err)
-		}
+		s := openConfiguredStore(t)
 		return &fetcher{store: s, api: pdfSrv.Client(), dl: pdfSrv.Client(), now: time.Now()}
 	}
 	paper := func() *store.Paper {
@@ -463,7 +454,7 @@ func TestFetchFreeTextAmbiguous(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "re-run") {
 		t.Errorf("ambiguous free text must fail with candidates and re-run instructions, got %v", err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	keys, _ := s.Keys()
 	if len(keys) != 0 {
 		t.Errorf("no entry may be created on ambiguity, found %v", keys)
@@ -580,7 +571,7 @@ func TestFetchFreeTextYearMismatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "re-run") {
 		t.Errorf("a year that contradicts the top hit must block acceptance, got %v", err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	if keys, _ := s.Keys(); len(keys) != 0 {
 		t.Errorf("no entry may be created, found %v", keys)
 	}
@@ -588,7 +579,7 @@ func TestFetchFreeTextYearMismatch(t *testing.T) {
 
 func TestFetchDuplicate(t *testing.T) {
 	fetchFixtureStore(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -645,7 +636,7 @@ func TestFetchDryRun(t *testing.T) {
 
 func TestFetchLogsEvent(t *testing.T) {
 	dir := fetchFixtureStore(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -660,5 +651,285 @@ func TestFetchLogsEvent(t *testing.T) {
 	data, _ := os.ReadFile(files[0])
 	if !strings.Contains(string(data), `"outcome":"duplicate"`) {
 		t.Errorf("events file should record the duplicate outcome:\n%s", data)
+	}
+}
+
+// TestFetchPDFURLCreatesEntry covers the case the store exists for: a book
+// or paper whose PDF is openly available on an author's page, with no
+// scriptable route from any identifier to that file. The URL is the
+// reference, the bytes arrive first, and what paper they hold is settled
+// by identifying the download — not by anything the URL said.
+func TestFetchPDFURLCreatesEntry(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	pdfPath := filepath.Join(t.TempDir(), "homepage.pdf")
+	makeIngestPDF(t, pdfPath, "Probability inequalities", "10.1080/01621459.1963.10500830")
+	body, err := os.ReadFile(pdfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	t.Cleanup(pdfSrv.Close)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefWorkResponse)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	// Crossref is the only service this route may use: the DOI comes off
+	// the downloaded page, and Unpaywall exists to find a PDF we already
+	// hold. Everything else fails the test by construction.
+	noSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("only Crossref may be consulted when the PDF is already in hand: %s", r.URL)
+	}))
+	t.Cleanup(noSrv.Close)
+	overrideBases(t, crossrefSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL)
+
+	url := pdfSrv.URL + "/pub/cup_book_online.pdf"
+	if err := runFetch([]string{url}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := openConfiguredStore(t)
+	p, err := s.Load("hoeffding_1963")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != "draft" || p.Holdings != "published" {
+		t.Errorf("status/holdings = %q/%q", p.Status, p.Holdings)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
+		t.Error("published.pdf should have been downloaded into the entry")
+	}
+	// Provenance: where the file came from is the whole reason this route
+	// beats downloading by hand and ingesting the result.
+	if got := p.Versions["published.pdf"].Source; got != url {
+		t.Errorf("source = %q, want the URL it was downloaded from (%q)", got, url)
+	}
+}
+
+// TestFetchPDFURLNotAPDF covers the commonest way a URL goes wrong: it
+// serves a landing page rather than the file. Nothing is known about the
+// paper in that case, so unlike the DOI route there is no metadata left to
+// make a draft entry out of, and the store must stay empty.
+func TestFetchPDFURLNotAPDF(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	htmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, "<html><body>Download our paper</body></html>")
+	}))
+	t.Cleanup(htmlSrv.Close)
+	guardBases(t)
+
+	err := runFetch([]string{htmlSrv.URL + "/landing"})
+	if err == nil {
+		t.Fatal("a URL serving HTML must fail")
+	}
+	if !strings.Contains(err.Error(), "text/html") {
+		t.Errorf("error should name the content-type received, got:\n%s", err)
+	}
+	entries, rerr := os.ReadDir(storeDir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != "events" {
+			t.Errorf("no entry may be created from a failed download, found %s", e.Name())
+		}
+	}
+}
+
+// servePDF serves the bytes of a PDF describing the given title and DOI,
+// as an author's homepage would.
+func servePDF(t *testing.T, title, doi string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "served.pdf")
+	makeIngestPDF(t, path, title, doi)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/pub/paper.pdf"
+}
+
+// saveHoeffdingEntry writes the metadata-only entry that -into attaches to.
+func saveHoeffdingEntry(t *testing.T) *store.Store {
+	t.Helper()
+	s := openConfiguredStore(t)
+	err := s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Hoeffding, Wassily",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"journal": "JASA", "year": "1963"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// TestFetchPDFURLInto covers the common shape of the problem: the entry is
+// already in the store because an earlier fetch resolved the identifier
+// but found no open-access route, and the file turns up later on a
+// homepage.
+func TestFetchPDFURLInto(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	url := servePDF(t, "Probability inequalities", "10.1080/01621459.1963.10500830")
+	guardBases(t)
+	s := saveHoeffdingEntry(t)
+
+	if err := runFetch([]string{"-into", "hoeffding_1963", url}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
+		t.Error("the download should have been attached as published.pdf")
+	}
+	p, _ := s.Load("hoeffding_1963")
+	if p.Holdings != "published" {
+		t.Errorf("holdings = %q", p.Holdings)
+	}
+	if got := p.Versions["published.pdf"].Source; got != url {
+		t.Errorf("source = %q, want %q", got, url)
+	}
+}
+
+// TestFetchPDFURLIntoMismatch checks that -into still verifies. The URL is
+// the only handle the message can offer: unlike ingest there is no file
+// left behind for the reader to go and look at.
+func TestFetchPDFURLIntoMismatch(t *testing.T) {
+	fetchFixtureStore(t)
+	url := servePDF(t, "A Completely Different Paper", "10.9999/mismatch")
+	guardBases(t)
+	s := saveHoeffdingEntry(t)
+
+	err := runFetch([]string{"-into", "hoeffding_1963", url})
+	if err == nil {
+		t.Fatal("a download that is not the named paper must be refused")
+	}
+	if !strings.Contains(err.Error(), url) {
+		t.Errorf("error should name the URL, got:\n%s", err)
+	}
+	if !strings.Contains(err.Error(), "10.9999/mismatch") {
+		t.Errorf("error should say what the PDF looks like, got:\n%s", err)
+	}
+	assertUntouched(t, s, "hoeffding_1963")
+}
+
+// TestFetchPDFURLWithDOI covers a scanned or otherwise unstamped file: the
+// bytes carry nothing to identify them by, so the caller says what the
+// paper is and identification is skipped.
+func TestFetchPDFURLWithDOI(t *testing.T) {
+	fetchFixtureStore(t)
+	url := servePDF(t, "A Scan With No Stamp", "")
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefWorkResponse)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+
+	err := runFetch([]string{"-doi", "10.1080/01621459.1963.10500830", url})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openConfiguredStore(t)
+	p, err := s.Load("hoeffding_1963")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Holdings != "published" {
+		t.Errorf("holdings = %q", p.Holdings)
+	}
+	if got := p.Versions["published.pdf"].Source; got != url {
+		t.Errorf("source = %q, want %q", got, url)
+	}
+}
+
+// TestFetchPDFURLFlagsNeedAURL checks that -doi and -into are refused on
+// the reference kinds that already know what they name.
+func TestFetchPDFURLFlagsNeedAURL(t *testing.T) {
+	fetchFixtureStore(t)
+	guardBases(t)
+
+	cases := [][]string{
+		{"-into", "hoeffding_1963", "10.1080/01621459.1963.10500830"},
+		{"-doi", "10.1080/01621459.1963.10500830", "2412.05039"},
+		{"-into", "hoeffding_1963", "Hoeffding inequalities 1963"},
+	}
+	for _, args := range cases {
+		if err := runFetch(args); err == nil {
+			t.Errorf("runFetch(%q) should be refused: the flags apply to a PDF URL", args)
+		}
+	}
+}
+
+// TestFetchPDFURLDOIAndIntoConflict checks the two flags are exclusive:
+// one creates an entry, the other attaches to one that exists.
+func TestFetchPDFURLDOIAndIntoConflict(t *testing.T) {
+	fetchFixtureStore(t)
+	guardBases(t)
+
+	err := runFetch([]string{"-doi", "10.1/x", "-into", "hoeffding_1963",
+		"https://example.org/a.pdf"})
+	if err == nil || !strings.Contains(err.Error(), "use one of them") {
+		t.Errorf("conflicting flags must be refused, got %v", err)
+	}
+}
+
+// TestFetchPDFURLDryRun checks that a dry run neither downloads nor writes.
+func TestFetchPDFURLDryRun(t *testing.T) {
+	storeDir := fetchFixtureStore(t)
+	guardBases(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a dry run must not download anything")
+	}))
+	t.Cleanup(srv.Close)
+
+	url := srv.URL + "/paper.pdf"
+	out := captureStdout(t, func() {
+		if err := runFetch([]string{"-dry-run", url}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, url) {
+		t.Errorf("dry run should report the URL it would download, got:\n%s", out)
+	}
+	entries, err := os.ReadDir(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			t.Errorf("a dry run must write nothing, found %s", e.Name())
+		}
+	}
+}
+
+// TestFetchPDFURLUnidentifiedHandsOffToFetch checks the hand-off message
+// for the case that actually turns up with books: nothing on the first
+// page identifies the work. The retry it suggests has to be one the
+// reader can run — the download is gone, so instructions naming a local
+// file would send them to a path that no longer exists.
+func TestFetchPDFURLUnidentifiedHandsOffToFetch(t *testing.T) {
+	fetchFixtureStore(t)
+	url := servePDF(t, "Bayesian Filtering and Smoothing", "")
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work-list","message":{"items":[]}}`)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", "", "", "")
+
+	err := runFetch([]string{url})
+	if err == nil {
+		t.Fatal("an unidentifiable download must fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "paper fetch -doi <doi> "+url) {
+		t.Errorf("should suggest re-running fetch against the same URL, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "paper ingest") {
+		t.Errorf("must not suggest ingesting a file that no longer exists, got:\n%s", msg)
 	}
 }

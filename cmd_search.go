@@ -68,7 +68,7 @@ func runSearch(args []string) error {
 		return fmt.Errorf("search: invalid -status %q; want one of draft, clean", *statusFlag)
 	}
 
-	s, err := store.Open(*storeFlag)
+	s, _, err := openStore(*storeFlag)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}

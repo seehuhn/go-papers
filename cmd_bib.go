@@ -55,7 +55,7 @@ func runBib(args []string) error {
 		return fmt.Errorf("bib: specify one or more keys, or use -all to export all papers")
 	}
 
-	s, err := store.Open(*storeFlag)
+	s, _, err := openStore(*storeFlag)
 	if err != nil {
 		return fmt.Errorf("bib: %w", err)
 	}

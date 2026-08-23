@@ -19,7 +19,9 @@ package store
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,28 +36,22 @@ type Store struct {
 	Root string
 }
 
-// Open resolves the store root and returns a Store backed by it. The root
-// is chosen from, in order of preference: flagValue (if non-empty) and the
-// PAPER_STORE environment variable. There is no built-in default; Open
-// fails if neither is set, or if the resolved directory does not exist.
-func Open(flagValue string) (*Store, error) {
-	envValue := os.Getenv("PAPER_STORE")
-
-	root := flagValue
-	if root == "" {
-		root = envValue
-	}
-
-	if root == "" {
-		return nil, fmt.Errorf(
-			"no paper store configured: give the -store flag or set the PAPER_STORE environment variable to the store directory")
-	}
-
+// Open returns a Store backed by the directory at root, which must exist
+// and carry a store marker in a format this paper understands. Resolving
+// root — from the -store flag or from the config file — happens in the
+// caller; this package has no opinion on where a store lives.
+func Open(root string) (*Store, error) {
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf(
-			"paper store directory %q does not exist (tried, in order: -store flag %q, PAPER_STORE=%q)",
-			root, flagValue, envValue)
+		return nil, fmt.Errorf("paper store directory %q does not exist", root)
+	}
+
+	if err := CheckMarker(root); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf(
+				"%s is not a paper store: run `paper init %s` to create one", root, root)
+		}
+		return nil, err
 	}
 
 	return &Store{Root: root}, nil

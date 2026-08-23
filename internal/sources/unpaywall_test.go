@@ -50,8 +50,8 @@ func TestUnpaywallLookup(t *testing.T) {
 func TestUnpaywallRequiresEmail(t *testing.T) {
 	u := &Unpaywall{BaseURL: "http://invalid.invalid"}
 	_, err := u.Lookup("10.1/x")
-	if err == nil || !strings.Contains(err.Error(), "config.json") {
-		t.Errorf("missing email: got %v, want an error mentioning config.json", err)
+	if err == nil || !strings.Contains(err.Error(), "paper init -email") {
+		t.Errorf("missing email: got %v, want an error naming `paper init -email`", err)
 	}
 }
 

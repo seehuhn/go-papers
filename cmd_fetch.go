@@ -77,6 +77,8 @@ const scoreMargin = 1.3
 func runFetch(args []string) (err error) {
 	fs, storeFlag := newFlagSet("fetch")
 	dryRun := fs.Bool("dry-run", false, "resolve and report, without writing to the store or downloading")
+	doiFlag := fs.String("doi", "", "for a PDF URL: skip identification, the file is the paper with this DOI")
+	into := fs.String("into", "", "for a PDF URL: attach the downloaded file to this existing entry")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -85,17 +87,13 @@ func runFetch(args []string) (err error) {
 	}
 
 	if fs.NArg() == 0 {
-		return fmt.Errorf("fetch: specify a reference: a DOI, an arXiv ID or URL, or free text such as 'Hoeffding inequalities 1963'")
+		return fmt.Errorf("fetch: specify a reference: a DOI, an arXiv ID or URL, the URL of a PDF, or free text such as 'Hoeffding inequalities 1963'")
 	}
 	// Unquoted free text arrives as several arguments; a DOI or arXiv ID
 	// arrives as one, and joining leaves it untouched.
 	refStr := strings.Join(fs.Args(), " ")
 
-	s, err := store.Open(*storeFlag)
-	if err != nil {
-		return fmt.Errorf("fetch: %w", err)
-	}
-	cfg, err := s.LoadConfig()
+	s, cfg, err := openStore(*storeFlag)
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
@@ -110,6 +108,10 @@ func runFetch(args []string) (err error) {
 	}
 
 	ref := sources.ParseRef(refStr)
+
+	if err := checkPDFURLFlags(ref.Kind, *doiFlag, *into); err != nil {
+		return err
+	}
 
 	// -dry-run makes no store writes, and the events directory is a store
 	// write, so a dry run is not logged.
@@ -132,9 +134,96 @@ func runFetch(args []string) (err error) {
 		return f.fetchDOI(trimDOI(ref.DOI))
 	case sources.RefArxiv:
 		return f.fetchArxiv(ref)
+	case sources.RefPDFURL:
+		return f.fetchPDFURL(ref.URL, *doiFlag, *into)
 	default:
 		return f.fetchText(ref.Text)
 	}
+}
+
+// checkPDFURLFlags rejects -doi and -into on a reference that is not a
+// PDF URL. Both say what a downloaded file is, and the other three
+// reference kinds already know that from the reference itself.
+func checkPDFURLFlags(kind sources.RefKind, doiFlag, into string) error {
+	if doiFlag == "" && into == "" {
+		return nil
+	}
+	if kind != sources.RefPDFURL {
+		return fmt.Errorf("fetch: -doi and -into apply to the URL of a PDF, "+
+			"which has to be identified after downloading; %s is resolved from the reference itself",
+			refKindInput(kind))
+	}
+	if doiFlag != "" && into != "" {
+		return fmt.Errorf("fetch: -doi creates a new entry, -into attaches to an existing one; use one of them")
+	}
+	return nil
+}
+
+// fetchPDFURL handles a reference that is the URL of a PDF: a paper or
+// book whose file is openly available somewhere, with no scriptable route
+// from any identifier to it. This is the one reference kind that resolves
+// backwards. A DOI, an arXiv ID and free text all go identifier ->
+// metadata -> maybe a file, which is why they can still leave a
+// metadata-only draft behind when no file turns up. A URL names a file
+// and says nothing about the work it holds, so the bytes come first and
+// the paper is identified from them afterwards, by the same pipeline
+// ingest runs over a file found on disk.
+//
+// Because nothing is known about the paper until the download succeeds, a
+// failure here writes nothing at all: there is no metadata to make an
+// entry out of. The downloaded file lives in a temporary directory and is
+// either moved into the store or discarded with it — it is never left
+// lying around for someone to read in place.
+func (f *fetcher) fetchPDFURL(url, doiOverride, into string) error {
+	if f.dryRun {
+		fmt.Printf("would download %s\n", url)
+		fmt.Printf("and identify the paper from the downloaded file\n")
+		return nil
+	}
+
+	dir, err := os.MkdirTemp("", "paper-fetch-")
+	if err != nil {
+		return fmt.Errorf("fetch: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	dest := filepath.Join(dir, downloadName(url))
+	if err := resolve.FetchFile(f.dl, url, dest, f.email); err != nil {
+		return fmt.Errorf("fetch: %w", err)
+	}
+
+	file := ingestFile{path: dest, modTime: f.now, source: url}
+	in := &ingester{store: f.store, email: f.email, api: f.api, now: f.now}
+
+	if into != "" {
+		if _, err := in.ingestIntoOne(into, file); err != nil {
+			return fmt.Errorf("fetch: %w", err)
+		}
+		return nil
+	}
+	if _, _, err := in.ingestOne(file, doiOverride, ""); err != nil {
+		return fmt.Errorf("fetch: %w", err)
+	}
+	return nil
+}
+
+// downloadName is the file name a download is given inside its temporary
+// directory. It is cosmetic — the name the file keeps is decided by the
+// entry it is attached to — but it shows up in messages about the file,
+// so the last path segment of the URL is friendlier than a fixed name.
+func downloadName(url string) string {
+	name := url
+	if i := strings.IndexAny(name, "?#"); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.TrimSuffix(name, "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".pdf") {
+		return "download.pdf"
+	}
+	return filepath.Base(name)
 }
 
 // refKindInput reports the Event.Input value for a parsed reference kind.
@@ -144,6 +233,8 @@ func refKindInput(kind sources.RefKind) string {
 		return "doi"
 	case sources.RefArxiv:
 		return "arxiv"
+	case sources.RefPDFURL:
+		return "url"
 	default:
 		return "text"
 	}
@@ -152,10 +243,17 @@ func refKindInput(kind sources.RefKind) string {
 // refKindSource reports the metadata service a reference kind is resolved
 // through, for the event log's Source field.
 func refKindSource(kind sources.RefKind) string {
-	if kind == sources.RefArxiv {
+	switch kind {
+	case sources.RefArxiv:
 		return "arxiv"
+	case sources.RefPDFURL:
+		// Which service ends up naming the paper depends on what the
+		// downloaded file turns out to say about itself, so the route in
+		// is the only thing known when the event is written.
+		return "url"
+	default:
+		return "crossref"
 	}
-	return "crossref"
 }
 
 // fetcher carries the state shared by the three resolution branches.

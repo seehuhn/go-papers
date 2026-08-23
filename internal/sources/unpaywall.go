@@ -48,10 +48,10 @@ func (u *Unpaywall) baseURL() string {
 }
 
 // Lookup queries the OA status of a DOI. Calling with an empty Email
-// returns an error telling the agent to configure config.json.
+// returns an error saying how to configure one.
 func (u *Unpaywall) Lookup(doi string) (*UnpaywallResult, error) {
 	if u.Email == "" {
-		return nil, fmt.Errorf("unpaywall requires a contact email: add {\"email\": \"you@example.org\"} to config.json in the store root")
+		return nil, fmt.Errorf("unpaywall requires a contact email: run `paper init -email <address> <dir>` to set one")
 	}
 
 	q := url.Values{}

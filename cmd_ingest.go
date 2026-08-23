@@ -100,11 +100,7 @@ func runIngest(args []string) error {
 		return fmt.Errorf("ingest: %w", err)
 	}
 
-	s, err := store.Open(*storeFlag)
-	if err != nil {
-		return fmt.Errorf("ingest: %w", err)
-	}
-	cfg, err := s.LoadConfig()
+	s, cfg, err := openStore(*storeFlag)
 	if err != nil {
 		return fmt.Errorf("ingest: %w", err)
 	}
@@ -131,7 +127,9 @@ func runIngest(args []string) error {
 	return nil
 }
 
-// ingester carries the state shared by the ingest branches.
+// ingester carries the state shared by the ingest branches, and by
+// fetch's PDF-URL branch, which reuses the identification pipeline on the
+// file it has just downloaded.
 type ingester struct {
 	store *store.Store
 	email string
@@ -149,6 +147,38 @@ func (in *ingester) crossref() *sources.Crossref {
 type ingestFile struct {
 	path    string
 	modTime time.Time
+
+	// source is the provenance recorded for the file once it is attached.
+	// It is ingestSource for a file already on disk, and the URL it came
+	// from for one that fetch downloaded. Where a file came from is what
+	// a later audit has to work from, so a download records the URL
+	// rather than losing it behind a temporary path.
+	source string
+}
+
+// downloaded reports whether the file was fetched from a URL rather than
+// found on the local filesystem.
+func (f ingestFile) downloaded() bool {
+	return f.source != ingestSource
+}
+
+// logAction is the entry-log action for the command that produced this
+// file.
+func (f ingestFile) logAction() string {
+	if f.downloaded() {
+		return "fetch"
+	}
+	return "ingest"
+}
+
+// origin describes where the file came from, for the entry log. A
+// downloaded file names its URL: its path is a temporary directory that
+// will not exist by the time anyone reads the log.
+func (f ingestFile) origin() string {
+	if f.downloaded() {
+		return "downloaded from " + f.source
+	}
+	return "identified in " + f.path
 }
 
 // ingestFiles stats the named files and drops the ones last modified
@@ -192,7 +222,7 @@ func ingestFiles(paths []string, since string) ([]ingestFile, []ingestFailure, e
 				path, fi.ModTime().Format(time.RFC3339), cutoff.Format(time.RFC3339))
 			continue
 		}
-		files = append(files, ingestFile{path: path, modTime: fi.ModTime()})
+		files = append(files, ingestFile{path: path, modTime: fi.ModTime(), source: ingestSource})
 	}
 	return files, failures, nil
 }
@@ -252,7 +282,7 @@ func (in *ingester) ingestIntoOne(key string, f ingestFile) (int, error) {
 	if !ok {
 		return id.Tier, intoMismatchError(p, f, doc, id)
 	}
-	if _, err := attachFile(in.store, p, f.path, filename, ingestSource, in.now); err != nil {
+	if _, err := attachFile(in.store, p, f.path, filename, f.source, in.now); err != nil {
 		return id.Tier, err
 	}
 	fmt.Printf("ingested %s -> %s\n", f.path, p.Key)
@@ -393,7 +423,7 @@ func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (
 		key, err := in.ingestArxiv(f, id.ArxivID, id.Version)
 		return key, id.Tier, err
 	default:
-		return "", id.Tier, unidentifiedError(doc, id)
+		return "", id.Tier, unidentifiedError(f, doc, id)
 	}
 }
 
@@ -499,10 +529,10 @@ func (in *ingester) ingestArxiv(f ingestFile, id string, version int) (string, e
 // says so: the metadata is worth keeping, and the caller only has to
 // place the file.
 func (in *ingester) createAndAttach(f ingestFile, p *store.Paper, filename, detail string) (string, error) {
-	if err := createDraft(in.store, p, in.now, "ingest", detail+", identified in "+f.path); err != nil {
+	if err := createDraft(in.store, p, in.now, f.logAction(), detail+", "+f.origin()); err != nil {
 		return "", err
 	}
-	if _, err := attachFile(in.store, p, f.path, filename, ingestSource, in.now); err != nil {
+	if _, err := attachFile(in.store, p, f.path, filename, f.source, in.now); err != nil {
 		return "", fmt.Errorf("the draft entry %s was created, but the file could not be moved into it: %w",
 			p.Key, err)
 	}
@@ -543,7 +573,13 @@ func intoCountError(key string, files []ingestFile, failures []ingestFailure) er
 // file stays where it is.
 func intoMismatchError(p *store.Paper, f ingestFile, doc *pdfid.DocText, id pdfid.ID) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s does not look like %s, so it was left in place.\n", f.path, p.Key)
+	if f.downloaded() {
+		// There is no file to leave in place: the download lives in a
+		// temporary directory that goes away when the command returns.
+		fmt.Fprintf(&b, "%s does not look like %s, so nothing was attached.\n", f.source, p.Key)
+	} else {
+		fmt.Fprintf(&b, "%s does not look like %s, so it was left in place.\n", f.path, p.Key)
+	}
 
 	b.WriteString("\nWhat the PDF says about itself:\n")
 	describePDF(&b, doc, id)
@@ -569,14 +605,23 @@ func intoMismatchError(p *store.Paper, f ingestFile, doc *pdfid.DocText, id pdfi
 // could pin down, handing over everything that was gathered along the
 // way — including the tier-3 title guess, which is all the evidence there
 // is that the search was tried and came back empty.
-func unidentifiedError(doc *pdfid.DocText, id pdfid.ID) error {
+func unidentifiedError(f ingestFile, doc *pdfid.DocText, id pdfid.ID) error {
 	var b strings.Builder
 	b.WriteString("cannot tell which paper this is.\n")
 	b.WriteString("What the PDF says about itself:\n")
 	describePDF(&b, doc, id)
 	b.WriteString("\nFind the paper's DOI or arXiv ID, then re-run:\n")
-	b.WriteString("  paper ingest -doi <doi> <file>\n")
-	b.WriteString("  paper ingest -arxiv <id> <file>")
+	if f.downloaded() {
+		// The download went to a temporary directory that is already
+		// gone, so the retry has to start from the URL again. There is no
+		// -arxiv here: an arXiv URL never reaches this branch, it is
+		// recognized as an arXiv reference before anything is downloaded.
+		fmt.Fprintf(&b, "  paper fetch -doi <doi> %s\n", f.source)
+		fmt.Fprintf(&b, "  paper fetch -into <key> %s", f.source)
+	} else {
+		b.WriteString("  paper ingest -doi <doi> <file>\n")
+		b.WriteString("  paper ingest -arxiv <id> <file>")
+	}
 	return wrapOutcome("unidentified", errors.New(b.String()))
 }
 

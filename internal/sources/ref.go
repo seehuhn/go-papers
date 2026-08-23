@@ -28,6 +28,10 @@ const (
 	RefDOI RefKind = iota + 1
 	RefArxiv
 	RefText
+	// RefPDFURL is a bare http(s) URL that neither the DOI nor the arXiv
+	// extractor claimed. It names a file rather than a work: nothing is
+	// known about which paper it holds until the bytes are in hand.
+	RefPDFURL
 )
 
 type Ref struct {
@@ -36,6 +40,7 @@ type Ref struct {
 	ArxivID string // set for RefArxiv, without version suffix
 	Version int    // arXiv version, 0 if unspecified
 	Text    string // set for RefText
+	URL     string // set for RefPDFURL
 }
 
 // doiPattern matches a syntactically valid DOI, e.g.
@@ -62,6 +67,13 @@ func ParseRef(s string) Ref {
 	// Try to extract and validate arXiv ID
 	if arxiv := extractArxiv(s); arxiv.ArxivID != "" {
 		return arxiv
+	}
+
+	// An http(s) URL that survived both extractors names a file, not a
+	// work. Whether it really holds a PDF is settled by the download,
+	// which checks the %PDF- magic, not by the spelling of the URL.
+	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
+		return Ref{Kind: RefPDFURL, URL: s}
 	}
 
 	// Default to free text

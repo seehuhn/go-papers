@@ -19,7 +19,11 @@ package main
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"seehuhn.de/go/paper/internal/config"
+	"seehuhn.de/go/paper/internal/store"
 )
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns
@@ -42,4 +46,53 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("reading captured stdout: %v", err)
 	}
 	return string(data)
+}
+
+// initStore creates a fresh directory prepared as a paper store, and
+// points $PAPER_CONFIG at a config file naming it, so that a test drives
+// the commands exactly as a configured user would. The user's real store
+// and real config are never involved.
+func initStore(t *testing.T, email string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := store.WriteMarker(dir); err != nil {
+		t.Fatalf("preparing the store: %v", err)
+	}
+	writeConfig(t, &config.Config{Store: dir, Email: email})
+	return dir
+}
+
+// writeConfig writes cfg to a temporary file and points $PAPER_CONFIG at
+// it, returning the path.
+func writeConfig(t *testing.T, cfg *config.Config) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "paper.json")
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("writing the config: %v", err)
+	}
+	t.Setenv(config.EnvVar, path)
+	return path
+}
+
+// noConfig points $PAPER_CONFIG at a file that does not exist, so that a
+// test can see what an unconfigured paper does.
+func noConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "paper.json")
+	t.Setenv(config.EnvVar, path)
+	return path
+}
+
+// openConfiguredStore opens the store the current test is configured to
+// use, resolving it exactly as a command does. Tests that inspect the
+// store after running a command should reach it this way, so that a break
+// in the resolution path shows up as a test failure rather than as a
+// silently different store.
+func openConfiguredStore(t *testing.T) *store.Store {
+	t.Helper()
+	s, _, err := openStore("")
+	if err != nil {
+		t.Fatalf("opening the configured store: %v", err)
+	}
+	return s
 }

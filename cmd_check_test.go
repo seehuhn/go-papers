@@ -31,8 +31,7 @@ import (
 
 func fixtureStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("PAPER_STORE", dir)
+	dir := initStore(t, "")
 	return &store.Store{Root: dir}, dir
 }
 
@@ -199,9 +198,8 @@ func TestCheckCorruptEntryReportedOnce(t *testing.T) {
 }
 
 func TestCheckOnline(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("PAPER_STORE", dir)
-	s, _ := store.Open("")
+	dir := initStore(t, "")
+	s, _ := store.Open(dir)
 	good := &store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -253,9 +251,8 @@ func TestCheckOnline(t *testing.T) {
 // instead use errors.Is against the typed sources.ErrNotFound sentinel,
 // which only a genuine 404 wraps.
 func TestCheckOnlineDoesNotMisreadA5xxBodyAsNotFound(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("PAPER_STORE", dir)
-	s, _ := store.Open("")
+	dir := initStore(t, "")
+	s, _ := store.Open(dir)
 	flaky := &store.Paper{Key: "flaky_2021", Status: "draft", Holdings: "none",
 		DOI: "10.5555/flaky.example",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{

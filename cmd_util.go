@@ -20,9 +20,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"seehuhn.de/go/paper/internal/config"
 	"seehuhn.de/go/paper/internal/resolve"
 	"seehuhn.de/go/paper/internal/sources"
 	"seehuhn.de/go/paper/internal/store"
@@ -33,7 +35,7 @@ import (
 // flag. The returned string pointer holds the -store value after Parse.
 func newFlagSet(name string) (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	storeFlag := fs.String("store", "", "path to the paper store (overrides PAPER_STORE)")
+	storeFlag := fs.String("store", "", "path to the paper store (overrides the configured store)")
 	return fs, storeFlag
 }
 
@@ -144,4 +146,47 @@ func mergePublished(c *sources.Crossref, p *store.Paper, entry *sources.ArxivEnt
 		return p
 	}
 	return resolve.Merge(published, entry)
+}
+
+// openStore resolves the store root and opens it, returning the user
+// config alongside so that a command can reach the contact email without
+// reading the file twice. The root comes from the -store flag when that is
+// given, and from the config file otherwise; the flag moves the store for
+// one invocation without discarding the rest of the config.
+//
+// A missing config file is fatal only when the flag has not already said
+// where the store is, which is what lets a test drive a command against a
+// throwaway store with no config at all.
+func openStore(flagValue string) (*store.Store, *config.Config, error) {
+	path, err := config.Path()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cfg, err := config.Load(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if flagValue == "" {
+			return nil, nil, fmt.Errorf(
+				"no paper store configured: run `paper init <dir>` to create one (there is no config file at %s)", path)
+		}
+		cfg = &config.Config{}
+	case err != nil:
+		return nil, nil, err
+	}
+
+	root := flagValue
+	if root == "" {
+		root = cfg.Store
+	}
+	if root == "" {
+		return nil, nil, fmt.Errorf(
+			"no paper store configured: run `paper init <dir>` to create one (%s names no store)", path)
+	}
+
+	s, err := store.Open(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, cfg, nil
 }

@@ -77,7 +77,7 @@ func assertUntouched(t *testing.T, s *store.Store, key string) {
 func TestIngestSinceAndInto(t *testing.T) {
 	storeDir := fetchFixtureStore(t)
 	guardBases(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -117,7 +117,7 @@ func TestIngestSinceAndInto(t *testing.T) {
 func TestIngestIntoNeedsExactlyOne(t *testing.T) {
 	fetchFixtureStore(t)
 	guardBases(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
 			"author": "Hoeffding, Wassily", "title": "T", "journal": "J", "year": "1963"}}})
@@ -142,7 +142,7 @@ func TestIngestIntoNeedsExactlyOne(t *testing.T) {
 func TestIngestIntoVerifiesIdentity(t *testing.T) {
 	fetchFixtureStore(t)
 	guardBases(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
 		DOI: "10.1080/01621459.1963.10500830",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
@@ -175,7 +175,7 @@ func TestIngestBatchCreatesEntries(t *testing.T) {
 	if err := runIngest([]string{f}); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("hoeffding_1963")
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestIngestFillsGapsFromPrism(t *testing.T) {
 		t.Errorf("crossref was asked for %q, want the bare DOI", askedFor)
 	}
 
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("hoeffding_1963")
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +275,7 @@ func TestIngestDOIOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	if _, err := s.Load("hoeffding_1963"); err != nil {
 		t.Error("entry should have been created from the override DOI")
 	}
@@ -300,7 +300,7 @@ func TestIngestUnidentifiable(t *testing.T) {
 	if _, statErr := os.Stat(f); statErr != nil {
 		t.Error("unidentified file must be left in place")
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	keys, _ := s.Keys()
 	if len(keys) != 0 {
 		t.Errorf("no entry may be created, found %v", keys)
@@ -336,7 +336,7 @@ func TestIngestBatchPartialFailure(t *testing.T) {
 		t.Errorf("the successful file must be reported on stdout, got:\n%s", out)
 	}
 
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	if _, loadErr := s.Load("hoeffding_1963"); loadErr != nil {
 		t.Errorf("the identifiable file must still have been ingested: %v", loadErr)
 	}
@@ -412,7 +412,7 @@ func TestIngestBatchArxiv(t *testing.T) {
 	if err := runIngest([]string{f}); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	p, err := s.Load("voss_2024")
 	if err != nil {
 		t.Fatal(err)
@@ -439,7 +439,7 @@ func TestIngestBatchArxiv(t *testing.T) {
 func TestIngestIntoPreprintDiscoversArxiv(t *testing.T) {
 	storeDir := fetchFixtureStore(t)
 	guardBases(t)
-	s, _ := store.Open("")
+	s := openConfiguredStore(t)
 	s.Save(&store.Paper{Key: "voss_2024", Status: "clean", Holdings: "none",
 		DOI: "10.1000/spde-greenland",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{

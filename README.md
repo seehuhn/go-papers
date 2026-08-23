@@ -11,12 +11,12 @@ go install seehuhn.de/go/paper@latest
 ## The store
 
 The store is a plain directory, in a location of your choosing: one
-subdirectory per paper, named by its citation key, plus a config file, an
+subdirectory per paper, named by its citation key, plus a marker file, an
 inbox drop zone and an event log.
 
 ```
 ~/Papers/
-├── config.json            contact email for the online services
+├── .paper-store.json      marker: this directory is a paper store
 ├── inbox/                 drop zone for PDFs awaiting ingest
 ├── events/                local, best-effort log of command outcomes
 └── <key>/                 one directory per paper
@@ -33,18 +33,18 @@ directory name and the bibtex key. `paper check` enforces that the two match.
 Everything is plain files: no database, no derived index. The store must
 stay navigable by a human without tooling.
 
-### `config.json`
+### `.paper-store.json`
 
-Store-wide settings, all optional; a missing file means an empty
-configuration.
+The marker that makes a directory a store, written by `paper init`:
 
 ```json
-{"email": "you@example.com"}
+{"paperStore": 1}
 ```
 
-`email` is the contact address the online metadata services are given.
-Unpaywall requires one and refuses to answer without it, and Crossref
-uses it to put requests in its faster, better-behaved "polite pool".
+The number is the layout version. It is checked every time the store is
+opened, so a store written by a later `paper` is refused rather than
+misread, and a mistyped or not-yet-synced path is reported as such
+instead of looking like an empty store.
 
 ### `events/`
 
@@ -55,22 +55,41 @@ each machine writes only its own file, so a synced store never sees a
 conflict. No command reads it: it is kept so that what works in practice
 can be looked at later.
 
-### Store-root resolution
+## Configuration
 
-The store location is entirely user-configured; `paper` has no built-in
-default. Every command that touches the store resolves its root in this
-order:
+Settings live in one file per user, outside the store:
 
-1. the `-store` flag, if given;
-2. the `PAPER_STORE` environment variable, if set.
+```json
+{
+  "store": "/home/you/Papers",
+  "email": "you@example.com"
+}
+```
 
-If neither is set, the command fails with an error. The usual setup is to
-export `PAPER_STORE` in your shell profile, pointing at a directory that
-is synced between your machines (e.g. via syncthing).
+`store` is the store root, and is what makes `paper` usable with no
+environment set up at all. `email` is the contact address the online
+metadata services are given: Unpaywall requires one and refuses to answer
+without it, and Crossref uses it to put requests in its faster,
+better-behaved "polite pool".
+
+Write the file with `paper init` rather than by hand.
+
+### Where the files are found
+
+The config file is `~/.paper.json`, or the file named by the
+`PAPER_CONFIG` environment variable when that is set.
+
+The store root is the `-store` flag when given, and the `store` field of
+the config otherwise. `paper` has no built-in default: without a config
+file, every command that touches the store fails and says to run `paper
+init`.
+
+The usual setup is a single `paper init` naming a directory that is
+synced between your machines (e.g. via syncthing).
 
 ## Commands
 
-Six commands are implemented so far (`audit` is planned but not yet
+Seven commands are implemented so far (`audit` is planned but not yet
 built).
 
 ### `paper help`
@@ -82,15 +101,47 @@ arguments.
 $ paper help
 ```
 
-### `paper fetch [-dry-run] <ref>`
+### `paper init [-email <address>] [-force] <dir>`
+
+Prepares `<dir>` as a paper store and records it in the config file, so
+that every later command finds it without a flag. The directory is
+created if it does not exist.
+
+```
+$ paper init -email you@example.com ~/Papers
+initialised paper store /home/you/Papers (format 1)
+wrote /home/you/.paper.json
+```
+
+Running it again on the same store is how a second machine adopts an
+already-synced store: the marker is left alone and only the config is
+written. Pointing the config at a *different* store is refused unless
+`-force` is given, so that a mistyped path cannot silently strand the
+store you already have. `-email` is optional and, when omitted, leaves
+any address already configured in place.
+
+### `paper fetch [-dry-run] [-doi <doi>] [-into <key>] <ref>`
 
 Resolves a reference online and downloads what can be fetched reliably by
-script. The reference is a DOI, an arXiv ID or URL, or free text, which is
-put through a Crossref search and accepted only when one hit clearly wins.
-A DOI gets its metadata from Crossref and its PDF from Unpaywall, if there
-is an open-access route; an arXiv ID gets the preprint's PDF and tex
-source, with the published record merged in when the preprint names a DOI.
-`-dry-run` reports what would happen and writes nothing.
+script. The reference is a DOI, an arXiv ID or URL, the URL of a PDF, or
+free text, which is put through a Crossref search and accepted only when
+one hit clearly wins. A DOI gets its metadata from Crossref and its PDF
+from Unpaywall, if there is an open-access route; an arXiv ID gets the
+preprint's PDF and tex source, with the published record merged in when
+the preprint names a DOI. `-dry-run` reports what would happen and writes
+nothing.
+
+A PDF URL is the route for a paper or book whose file is openly available
+somewhere no script can find it — an author's page, a course site, an
+institutional repository. It is the one reference kind that resolves
+backwards: a URL names a file and says nothing about the work it holds, so
+the file is downloaded first and then identified exactly as `ingest`
+identifies a file found on disk. What it was downloaded from is recorded
+as the file's source, which is the part a later audit needs and the part
+that downloading by hand throws away. Because nothing is known about the
+paper until the download succeeds, a failure here creates no entry at all.
+`-doi` says what an unstamped file is, skipping identification, and
+`-into` attaches it to an entry that already exists.
 
 The failures are hand-offs to the calling agent, not bare errors. Where no
 download route exists the draft entry is still created, and the command
@@ -102,6 +153,8 @@ candidates from Crossref, zbMATH and DBLP to choose between.
 ```bash
 $ paper fetch 10.1080/01621459.1963.10500830
 $ paper fetch arXiv:2412.05039
+$ paper fetch https://users.aalto.fi/~ssarkka/pub/cup_book_online.pdf
+$ paper fetch -into sarkka_2013 https://users.aalto.fi/~ssarkka/pub/cup_book_online.pdf
 ```
 
 ### `paper ingest [-since <ts>] [-into <key>] [-doi <doi>] [-arxiv <id>] <file.pdf>...`
@@ -114,10 +167,12 @@ the services are asked for metadata only. `-since` drops files older than a
 timestamp, and `-doi`/`-arxiv` say outright what a single file is, skipping
 identification.
 
-`-into` is the hand-off from a failed `fetch`: once the agent has found the
-PDF by hand, it attaches that one file to the entry `fetch` left behind,
-after checking that the file really is that paper. A file that fails the
-check stays where it is.
+`-into` is the hand-off from a failed `fetch`: once the agent has the PDF,
+it attaches that one file to the entry `fetch` left behind, after checking
+that the file really is that paper. A file that fails the check stays
+where it is. When the PDF is reachable at a URL, prefer `paper fetch
+-into`, which downloads and attaches in one step and records where the
+file came from; `ingest` is for files that are already on this machine.
 
 ```bash
 $ paper ingest -since 2026-08-01T00:00:00 ~/Downloads/*.pdf

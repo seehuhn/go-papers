@@ -63,7 +63,7 @@ func runCheck(args []string) (err error) {
 		return fmt.Errorf("check: parsing arguments: %w", err)
 	}
 
-	s, err := store.Open(*storeFlag)
+	s, cfg, err := openStore(*storeFlag)
 	if err != nil {
 		return fmt.Errorf("check: %w", err)
 	}
@@ -162,13 +162,9 @@ func runCheck(args []string) (err error) {
 	}
 
 	if *online {
-		cfg, err := s.LoadConfig()
-		if err != nil {
-			return fmt.Errorf("check: %w", err)
-		}
 		// Built once per run, per the interface contract: every DOI lookup
 		// this run makes shares one client, one HTTP timeout, and the
-		// store's configured contact email (for Crossref's "polite pool").
+		// configured contact email (for Crossref's "polite pool").
 		client := &sources.Crossref{BaseURL: crossrefBase, Client: &http.Client{Timeout: apiTimeout}, Email: cfg.Email}
 		for _, r := range results {
 			if r.paper.DOI == "" {

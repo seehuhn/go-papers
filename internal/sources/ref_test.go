@@ -44,6 +44,23 @@ func TestParseRef(t *testing.T) {
 		{"DOI:10.1007/BF00535479", Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
 		{"arxiv:2412.05039v2", Ref{Kind: RefArxiv, ArxivID: "2412.05039", Version: 2}},
 		{"ARXIV:2412.05039", Ref{Kind: RefArxiv, ArxivID: "2412.05039"}},
+
+		// A URL that neither the DOI nor the arXiv extractor claims is a
+		// candidate PDF: the download verifies the %PDF- magic, so the
+		// extension is not what decides this.
+		{"https://users.aalto.fi/~ssarkka/pub/cup_book_online_20131111.pdf",
+			Ref{Kind: RefPDFURL,
+				URL: "https://users.aalto.fi/~ssarkka/pub/cup_book_online_20131111.pdf"}},
+		{"http://example.org/papers/draft.pdf",
+			Ref{Kind: RefPDFURL, URL: "http://example.org/papers/draft.pdf"}},
+		{"https://example.org/download?id=42",
+			Ref{Kind: RefPDFURL, URL: "https://example.org/download?id=42"}},
+		{"  https://example.org/a.pdf  ",
+			Ref{Kind: RefPDFURL, URL: "https://example.org/a.pdf"}},
+		// A doi.org or arxiv.org URL whose identifier does not parse is
+		// still just a URL; nothing better is known about it.
+		{"https://doi.org/not-a-doi",
+			Ref{Kind: RefPDFURL, URL: "https://doi.org/not-a-doi"}},
 	}
 	for _, c := range cases {
 		if got := ParseRef(c.in); got != c.want {

@@ -55,7 +55,7 @@ func TestHelpFlagExitsZero(t *testing.T) {
 }
 
 func TestErrorPrefixNotDoubled(t *testing.T) {
-	t.Setenv("PAPER_STORE", "")
+	noConfig(t)
 	err := dispatch([]string{"bib", "-all"})
 	if err == nil {
 		t.Fatal("expected error")
