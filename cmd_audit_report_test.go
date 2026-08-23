@@ -95,3 +95,19 @@ func TestRenderJSONIsParseable(t *testing.T) {
 		t.Errorf("StoreKey = %q", back.Entries[0].StoreKey)
 	}
 }
+
+func TestRenderProseNamesUncheckedEntries(t *testing.T) {
+	r := &auditReport{Entries: []auditEntry{
+		{Key: "a", Existence: "unchecked"},
+		{Key: "b", Existence: "confirmed", StoreKey: "b_1999"},
+	}}
+
+	out := renderProse(r)
+
+	if !strings.Contains(out, "Not checked:") {
+		t.Errorf("unchecked entries should get their own section:\n%s", out)
+	}
+	if !strings.Contains(out, "a") {
+		t.Errorf("the unchecked entry should be named:\n%s", out)
+	}
+}

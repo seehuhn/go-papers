@@ -17,6 +17,9 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -124,5 +127,51 @@ func TestDiffAgainstStoreIsQuietWhenTheyAgree(t *testing.T) {
 
 	if got := diffAgainstStore(e, p); len(got) != 0 {
 		t.Errorf("identical entries should diff clean, got %v", got)
+	}
+}
+
+func TestSearchCandidateOrderIsDeterministicOnTies(t *testing.T) {
+	// Three sources each return a hit with an identical title, so all
+	// three candidates score identically; the reported order must still
+	// be the same on every run.
+	title := "The Exact Same Title"
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"message":{"items":[{"DOI":"10.1/c","title":[%q],"issued":{"date-parts":[[2001]]}}]}}`, title)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	zbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":[{"title":{"title":%q},"year":2001}]}`, title)
+	}))
+	t.Cleanup(zbSrv.Close)
+	dblpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":{"hits":{"hit":[{"info":{"title":%q,"year":"2001"}}]}}}`, title)
+	}))
+	t.Cleanup(dblpSrv.Close)
+	overrideBases(t, crossrefSrv.URL, refusingServer(t), refusingServer(t), zbSrv.URL, dblpSrv.URL)
+
+	a := &auditor{api: crossrefSrv.Client()}
+	e := bibtex.KeyedEntry{Entry: bibtex.Entry{Type: "misc",
+		Fields: map[string]string{"title": "A Different Title Entirely"}}}
+
+	first, ok := a.search(e)
+	if !ok || len(first) != 3 {
+		t.Fatalf("search = %v, %v; want 3 candidates", first, ok)
+	}
+	// Equal scores break the tie on the source name, so the order is a
+	// defined property, not an accident of the sort: alphabetical.
+	want := []string{"crossref", "dblp", "zbmath"}
+	for j, w := range want {
+		if first[j].Source != w {
+			t.Fatalf("tied candidates in order %v, want sources %v",
+				[]string{first[0].Source, first[1].Source, first[2].Source}, want)
+		}
+	}
+}
+
+func TestArxivIDOfPreservesOldStyleCase(t *testing.T) {
+	e := bibtex.Entry{Fields: map[string]string{"eprint": "arXiv:math.PR/0605234"}}
+
+	if got := arxivIDOf(e); got != "math.PR/0605234" {
+		t.Errorf("arxivIDOf = %q, want %q (the archive class is case-sensitive)", got, "math.PR/0605234")
 	}
 }

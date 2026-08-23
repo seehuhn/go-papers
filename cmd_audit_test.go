@@ -239,14 +239,13 @@ func TestAuditOnlineNeverDemotesAStoreConfirmedEntry(t *testing.T) {
 	if r.Entries[0].Existence != "confirmed" {
 		t.Errorf("Existence = %q, want confirmed (a store-held entry must never be demoted)", r.Entries[0].Existence)
 	}
-	found := false
+	// A downed source is not a disagreement, so no problem note is
+	// recorded either; only a real online verdict (notFound, unverified)
+	// would be.
 	for _, p := range r.Entries[0].Problems {
-		if strings.Contains(p, "online re-verification: unchecked") {
-			found = true
+		if strings.Contains(p, "online re-verification") {
+			t.Errorf("a failed re-verification must not be recorded as a disagreement: %v", r.Entries[0].Problems)
 		}
-	}
-	if !found {
-		t.Errorf("Problems should record the failed re-verification: %v", r.Entries[0].Problems)
 	}
 }
 
@@ -639,5 +638,75 @@ func TestAuditReportsUnparseableEntriesAndAuditsTheRest(t *testing.T) {
 	}
 	if !strings.Contains(out, "skipped") {
 		t.Errorf("the report should say the entry was skipped:\n%s", out)
+	}
+}
+
+func TestAuditOnlineDownedSourceIsNotADisagreement(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	s := openConfiguredStore(t)
+	p := &store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "published",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Hoeffding, Wassily", "title": "Probability inequalities",
+			"journal": "JASA", "year": "1963",
+			"doi": "10.1080/01621459.1963.10500830"}}}
+	if err := s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(down.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse)
+	bib := filepath.Join(dir, "refs.bib")
+	if err := os.WriteFile(bib, []byte(bibtex.Format("hoef", p.Bibtex)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-online", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	if strings.Contains(out, "online re-verification") {
+		t.Errorf("a downed source is not a disagreement; no note should be recorded:\n%s", out)
+	}
+	if !strings.Contains(out, "1 confirmed") {
+		t.Errorf("the store verdict must stand:\n%s", out)
+	}
+}
+
+func TestAuditReportsDuplicateCitationKeys(t *testing.T) {
+	dir := initStore(t, "")
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"message":{"items":[]}}`)
+	}))
+	t.Cleanup(empty.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+	bib := filepath.Join(dir, "refs.bib")
+	content := "@misc{twice,\n  title = {First use},\n}\n" +
+		"@misc{once,\n  title = {Fine},\n}\n" +
+		"@misc{twice,\n  title = {Second use},\n}\n"
+	if err := os.WriteFile(bib, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "duplicate") {
+		t.Errorf("a duplicated citation key is a bibliography defect; report it:\n%s", out)
+	}
+	if !strings.Contains(out, "line 1") {
+		t.Errorf("the report should say where the first use was:\n%s", out)
 	}
 }

@@ -91,10 +91,15 @@ func firstSurname(e bibtex.Entry) string {
 }
 
 // arxivIDOf returns the arXiv identifier an entry carries, from the
-// standard `eprint` field, or "" when it has none.
+// standard `eprint` field, or "" when it has none. Only the "arXiv:"
+// prefix is folded: the identifier itself keeps its case, because the
+// archive class in an old-style ID ("math.PR/0605234") is case-sensitive.
 func arxivIDOf(e bibtex.Entry) string {
 	id := strings.TrimSpace(e.Fields["eprint"])
-	return strings.TrimPrefix(strings.ToLower(id), "arxiv:")
+	if len(id) >= 6 && strings.EqualFold(id[:6], "arxiv:") {
+		id = id[6:]
+	}
+	return id
 }
 
 func abs(n int) int {
@@ -261,7 +266,18 @@ func (a *auditor) search(e bibtex.KeyedEntry) (cands []scoredCandidate, ok bool)
 		add(hits)
 	}
 
-	sort.Slice(cands, func(i, j int) bool { return cands[i].Score > cands[j].Score })
+	// Ties break on the source name and then the DOI, so the reported
+	// candidate order is a property of the input rather than of the sort.
+	sort.Slice(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		return a.DOI < b.DOI
+	})
 	return cands, ok
 }
 

@@ -121,6 +121,13 @@ func renderProse(r *auditReport) string {
 		}
 	}
 
+	if len(unchecked) > 0 {
+		b.WriteString("\nNot checked:\n")
+		for _, e := range unchecked {
+			fmt.Fprintf(&b, "%s: not established either way (a source was down, or nothing was looked up)\n", e.Key)
+		}
+	}
+
 	var withProblems []auditEntry
 	for _, e := range r.Entries {
 		if len(e.Problems) > 0 {

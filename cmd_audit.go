@@ -110,8 +110,18 @@ type auditor struct {
 // store already confirmed it, against the online sources via verify.
 func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 	r := &auditReport{}
+	// A duplicated citation key is a bibliography defect in its own
+	// right, and the parser keeps both entries, so it is reported here:
+	// on the later occurrence, naming where the first one was.
+	firstLine := make(map[string]int, len(entries))
 	for _, e := range entries {
 		item := auditEntry{Key: e.Key, Line: e.Line, Existence: "unchecked"}
+		if prev, seen := firstLine[e.Key]; seen {
+			item.Problems = append(item.Problems,
+				fmt.Sprintf("duplicate citation key (first used at line %d)", prev))
+		} else {
+			firstLine[e.Key] = e.Line
+		}
 		item.Problems = append(item.Problems, qualityProblems(e)...)
 		if p := matchStore(a.papers, e); p != nil {
 			item.StoreKey = p.Key
@@ -146,7 +156,10 @@ func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 					"held in the store as %s; no online source knows it", item.StoreKey))
 			}
 		case a.online:
-			if verdict, cands := a.verify(e); verdict != "confirmed" {
+			// Only a real online verdict is a disagreement worth a note.
+			// "unchecked" means a source was down: nothing was learned,
+			// so nothing is recorded.
+			if verdict, cands := a.verify(e); verdict != "confirmed" && verdict != "unchecked" {
 				item.Problems = append(item.Problems, fmt.Sprintf("online re-verification: %s", verdict))
 				item.Candidates = cands
 			}
