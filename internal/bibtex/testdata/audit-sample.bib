@@ -1,0 +1,48 @@
+@string{jams = {J. Amer. Math. Soc.}}
+@string{vol = {12}}
+
+@comment{This whole file is a fixture for the bibtex parser's golden test.}
+
+@article{voss_2020,
+  author = "Vo{\ss}, Jochen",
+  title = {A study of additive noise},
+  journal = jams,
+  year = {2020},
+}
+
+Some stray prose a human left here while editing the file by hand - bibtex
+treats anything outside a recognised entry as a comment, so this must not
+confuse the parser.
+
+@book{smith_2015,
+  author = {Smith, Ann},
+  title = {A study of {SPDEs} in {G}reenland},
+  publisher = {Acme},
+  year = {2015},
+}
+
+@techreport{doe_1999,
+  author = {Doe, Jane},
+  title = {A report on nothing in particular},
+  institution = {Somewhere Institute},
+  pages = {13--30},
+  year = {1999},
+}
+
+@misc{concat_1963,
+  title = {Concatenated},
+  note = jams # { supplement} # vol,
+  year = {2021},
+}
+
+@inproceedings{child,
+  author = {Jones, Bob},
+  title = {A talk},
+  crossref = {proc},
+}
+
+@proceedings{proc,
+  booktitle = {Proc. Nowhere},
+  year = {2011},
+  publisher = {Nobody},
+}
