@@ -17,12 +17,14 @@
 package pdfid
 
 import (
+	"errors"
 	"maps"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
+	"seehuhn.de/go/paper/internal/doi"
 	"seehuhn.de/go/paper/internal/match"
 )
 
@@ -54,6 +56,25 @@ type SearchHit struct {
 // cmd_ingest wires this to Crossref; tests use a stub.
 type SearchFunc func(titleGuess string) (SearchHit, error)
 
+// ValidateDOIFunc reports whether doiCandidate is a registered DOI. Tier
+// 2 uses it to pick the right rung of a prose DOI candidate's trim
+// ladder (see Config and tier2); cmd_ingest.go and cmd_fetch.go wire
+// this to sources.Handle.Exists, which checks existence independent of
+// which registration agency issued the DOI.
+type ValidateDOIFunc func(doiCandidate string) (bool, error)
+
+// Config bundles Identify's optional external resolvers. Search backs
+// tier 3's title lookup; ValidateDOI backs tier 2's prose DOI candidate
+// ladder. Either may be left nil: a nil Search skips tier 3 entirely
+// (see tier3); a nil ValidateDOI is treated like a validation error (see
+// tier2) - tier 2 cannot confirm anything, so it falls back to the raw
+// greedy match rather than silently accepting or rejecting a candidate
+// it never actually checked.
+type Config struct {
+	Search      SearchFunc
+	ValidateDOI ValidateDOIFunc
+}
+
 // tier3MinScore is the minimum TitleSimilarity score a tier-3 candidate
 // must reach before it is even considered - but score alone is not
 // sufficient, see corroborated.
@@ -76,12 +97,6 @@ const tier3MinScore = 0.9
 const tier3MinTokens = 4
 
 var (
-	// doiRegex matches a bare DOI. Trailing punctuation that is not part
-	// of the DOI itself (".", ",", ";", ")") is trimmed from the match
-	// separately, since the character class below cannot distinguish
-	// DOI-internal punctuation from a sentence's trailing full stop.
-	doiRegex = regexp.MustCompile(`10\.\d{4,9}/[^\s"<>]+`)
-
 	// arxivNewRegex matches the standard left-margin arXiv stamp used
 	// since 2007, e.g. "arXiv:2412.05039v2".
 	arxivNewRegex = regexp.MustCompile(`arXiv:(\d{4}\.\d{4,5})(v\d+)?`)
@@ -95,20 +110,21 @@ var (
 // Tier 3 accepts a candidate only when its title similarity clears
 // tier3MinScore and the candidate is corroborated by the document's own
 // text (see corroborated); otherwise ID.Tier is 0 and Title still carries
-// the guess so the error message can show it.
-func Identify(d *DocText, search SearchFunc) ID {
+// the guess so the error message can show it. See Config for the
+// external resolvers tiers 2 and 3 use.
+func Identify(d *DocText, cfg Config) ID {
 	scanned := allPagesEmpty(d.Pages)
 
 	if id, ok := tier1(d); ok {
 		id.Scanned = scanned
 		return id
 	}
-	if id, ok := tier2(d); ok {
+	if id, ok := tier2(d, cfg.ValidateDOI); ok {
 		id.Scanned = scanned
 		return id
 	}
 
-	id := tier3(d, search)
+	id := tier3(d, cfg.Search)
 	id.Scanned = scanned
 	return id
 }
@@ -192,16 +208,14 @@ func tier1Values(d *DocText) []string {
 	return values
 }
 
-// tier2 looks for a DOI or arXiv stamp in the extracted page text. All
-// pages are checked for a DOI first (in page order); only if no page
-// carries a DOI are the pages checked again for an arXiv stamp. DOI is
+// tier2 looks for a DOI or arXiv stamp in the extracted page text. DOI
+// is tried first, across all pages (see tier2DOI); only if no page
+// yields one are the pages checked again for an arXiv stamp. DOI is
 // preferred over arXiv ID when both could in principle appear, since a
 // DOI more precisely identifies the published version of record.
-func tier2(d *DocText) (ID, bool) {
-	for _, page := range d.Pages {
-		if doi, ok := findDOI(page); ok {
-			return ID{DOI: doi, Tier: 2}, true
-		}
+func tier2(d *DocText, validate ValidateDOIFunc) (ID, bool) {
+	if id, ok := tier2DOI(d, validate); ok {
+		return id, true
 	}
 	for _, page := range d.Pages {
 		if id, version, ok := findArxiv(page); ok {
@@ -209,6 +223,79 @@ func tier2(d *DocText) (ID, bool) {
 		}
 	}
 	return ID{}, false
+}
+
+// tier2DOI scans d.Pages, in order, for a DOI. Unlike tier 1's metadata
+// scan (see findDOI), a page-text DOI is a guess that must be checked
+// against validate before it is trusted - prose can glue trailing
+// punctuation onto a real DOI, or wrap one in a parenthetical, so the
+// raw greedy match is not automatically the right string.
+//
+// Within a page, doi.Candidates yields that page's DOI-shaped matches as
+// a longest-first trim ladder per match, matches in the order found.
+// Each candidate is validated in turn, memoised so the same candidate
+// string is never checked twice in this call (validateCached):
+//
+//   - a confirmed hit wins outright, immediately;
+//   - a rejected candidate moves on to the next rung (or match);
+//   - a validation error - or no validator at all - abandons validation
+//     for the rest of this call and falls back to the page's first (raw,
+//     untrimmed) candidate, unvalidated. This preserves the old regex
+//     scan's behaviour of just taking whatever it found rather than
+//     losing the DOI to a transient network failure; see ValidateDOIFunc
+//     error semantics require the caller to have wired a working
+//     validator to get validated results at all.
+//
+// Only once every page's candidates are exhausted without a hit or an
+// error does tier2DOI report failure, so tier2 can fall through to the
+// arXiv stamp scan.
+func tier2DOI(d *DocText, validate ValidateDOIFunc) (ID, bool) {
+	cache := map[string]validation{}
+	for _, page := range d.Pages {
+		cands := doi.Candidates(page)
+		if len(cands) == 0 {
+			continue
+		}
+		for _, c := range cands {
+			ok, err := validateCached(c, validate, cache)
+			if err != nil {
+				return ID{DOI: cands[0], Tier: 2}, true
+			}
+			if ok {
+				return ID{DOI: c, Tier: 2}, true
+			}
+		}
+	}
+	return ID{}, false
+}
+
+// errNoValidator stands in for a validation error when no ValidateDOIFunc
+// was wired at all: tier2DOI has no way to confirm a candidate, so it
+// takes the same "stop and fall back to the raw match" path as a real
+// validator error.
+var errNoValidator = errors.New("pdfid: no DOI validator configured")
+
+// validation is one memoised validateCached result.
+type validation struct {
+	ok  bool
+	err error
+}
+
+// validateCached calls validate(c), memoising the result in cache so
+// that a candidate seen again - on a later page, or a later rung of the
+// same ladder - is not re-validated.
+func validateCached(c string, validate ValidateDOIFunc, cache map[string]validation) (bool, error) {
+	if v, seen := cache[c]; seen {
+		return v.ok, v.err
+	}
+	var v validation
+	if validate == nil {
+		v.err = errNoValidator
+	} else {
+		v.ok, v.err = validate(c)
+	}
+	cache[c] = v
+	return v.ok, v.err
 }
 
 // tier3 guesses the title from the first page's largest-font text and, if
@@ -328,14 +415,18 @@ func titleGuess(topLines []string, topSizes []float64) string {
 	return ""
 }
 
-// findDOI returns the first DOI in s, if any, with trailing punctuation
-// that is not part of the DOI (".", ",", ";", ")") trimmed off.
+// findDOI returns tier 1's DOI guess from s: the first, longest
+// (untrimmed) rung of doi.Candidates(s), if any. Tier 1 trusts document
+// metadata and does not validate this guess over the network - see the
+// package doc on Config.ValidateDOI for the tier that does, tier 2's
+// prose scan (tier2DOI), which needs the whole trim ladder rather than
+// just its first rung.
 func findDOI(s string) (string, bool) {
-	m := doiRegex.FindString(s)
-	if m == "" {
+	cands := doi.Candidates(s)
+	if len(cands) == 0 {
 		return "", false
 	}
-	return strings.TrimRight(m, ".,;)"), true
+	return cands[0], true
 }
 
 // findArxiv returns the arXiv ID and version (0 if unversioned) of the

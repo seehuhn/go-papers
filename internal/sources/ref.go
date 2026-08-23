@@ -17,9 +17,12 @@
 package sources
 
 import (
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"seehuhn.de/go/paper/internal/doi"
 )
 
 type RefKind int
@@ -42,10 +45,6 @@ type Ref struct {
 	Text    string // set for RefText
 	URL     string // set for RefPDFURL
 }
-
-// doiPattern matches a syntactically valid DOI, e.g.
-// "10.1080/01621459.1963.10500830".
-var doiPattern = regexp.MustCompile(`^10\.\d{4,9}/\S+$`)
 
 // arxivNewPattern matches the post-2007 arXiv identifier style, e.g.
 // "0706.0001".
@@ -80,24 +79,48 @@ func ParseRef(s string) Ref {
 	return Ref{Kind: RefText, Text: s}
 }
 
-// extractDOI tries to extract a DOI from the input string.
+// doiURLPrefixes lists the doi.org URL forms extractDOI recognises, in
+// the order tried. Each is followed by a URL-path-escaped DOI, which is
+// unescaped before validation - a doi.org URL for a legacy SICI DOI
+// percent-encodes '<'/'>' as %3C/%3E, and the DOI itself must come back
+// with the raw characters, not the escapes.
+var doiURLPrefixes = []string{
+	"https://doi.org/",
+	"http://doi.org/",
+	"https://dx.doi.org/",
+	"http://dx.doi.org/",
+	"doi.org/",
+}
+
+// extractDOI tries to extract a DOI from the input string: a bare DOI, a
+// "doi:"-prefixed value, or a doi.org URL (see doiURLPrefixes). The
+// candidate is taken whole and validated with doi.Syntactic - no
+// trimming - since a stated reference is either the DOI or it isn't.
 func extractDOI(s string) string {
-	// Remove known DOI prefixes
-	if strings.HasPrefix(s, "https://doi.org/") {
-		s = strings.TrimPrefix(s, "https://doi.org/")
-	} else if strings.HasPrefix(s, "http://dx.doi.org/") {
-		s = strings.TrimPrefix(s, "http://dx.doi.org/")
-	} else if len(s) >= 4 && strings.EqualFold(s[:4], "doi:") {
-		s = s[4:]
+	if len(s) >= 4 && strings.EqualFold(s[:4], "doi:") {
+		return syntacticOrEmpty(strings.TrimSpace(s[4:]))
 	}
 
-	s = strings.TrimSpace(s)
+	for _, prefix := range doiURLPrefixes {
+		if !strings.HasPrefix(s, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(s, prefix)
+		if unescaped, err := url.PathUnescape(rest); err == nil {
+			rest = unescaped
+		}
+		return syntacticOrEmpty(rest)
+	}
 
-	// Validate DOI pattern
-	if doiPattern.MatchString(s) {
+	return syntacticOrEmpty(s)
+}
+
+// syntacticOrEmpty returns s if it is a syntactically well-formed DOI,
+// "" otherwise.
+func syntacticOrEmpty(s string) string {
+	if doi.Syntactic(s) {
 		return s
 	}
-
 	return ""
 }
 

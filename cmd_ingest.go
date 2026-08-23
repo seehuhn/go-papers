@@ -440,13 +440,22 @@ func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (
 }
 
 // identify extracts what a PDF says about itself and runs the pdfid tiers
-// over it. Tier 3 resolves its title guess through Crossref.
+// over it. Tier 3 resolves its title guess through Crossref; tier 2
+// confirms a prose DOI candidate's existence through the handle system
+// (see (*ingester).handle).
 func (in *ingester) identify(path string) (*pdfid.DocText, pdfid.ID, error) {
 	doc, err := pdfid.Extract(path, ingestPages)
 	if err != nil {
 		return nil, pdfid.ID{}, err
 	}
-	return doc, pdfid.Identify(doc, in.searchTitle), nil
+	cfg := pdfid.Config{Search: in.searchTitle, ValidateDOI: in.handle().Exists}
+	return doc, pdfid.Identify(doc, cfg), nil
+}
+
+// handle returns a Handle client for this run, following the constructor
+// pattern in cmd_fetch.go's auditor.
+func (in *ingester) handle() *sources.Handle {
+	return &sources.Handle{BaseURL: handleBase, Client: in.api}
 }
 
 // searchTitle is the pdfid.SearchFunc for tier 3: it runs the title guess

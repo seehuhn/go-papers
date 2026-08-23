@@ -24,6 +24,7 @@ import (
 	"unicode"
 
 	"seehuhn.de/go/paper/internal/bibtex"
+	"seehuhn.de/go/paper/internal/doi"
 	"seehuhn.de/go/paper/internal/tex"
 )
 
@@ -35,10 +36,6 @@ type Problem struct {
 	Severity string
 	Msg      string
 }
-
-// doiPattern matches a syntactically valid DOI, e.g.
-// "10.1080/01621459.1963.10500830".
-var doiPattern = regexp.MustCompile(`^10\.\d{4,9}/\S+$`)
 
 // arxivNewPattern matches the post-2007 arXiv identifier style, e.g.
 // "0706.0001".
@@ -247,9 +244,9 @@ func bracesBalanced(s string) bool {
 	return depth == 0
 }
 
-// Rule 6: DOI set but not matching the DOI pattern.
+// Rule 6: DOI set but not syntactically well-formed (see doi.Syntactic).
 func checkDOI(p *Paper) []Problem {
-	if p.DOI == "" || doiPattern.MatchString(p.DOI) {
+	if p.DOI == "" || doi.Syntactic(p.DOI) {
 		return nil
 	}
 	return []Problem{{p.Key, "error", fmt.Sprintf(

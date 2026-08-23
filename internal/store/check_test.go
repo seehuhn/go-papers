@@ -159,6 +159,31 @@ func TestCheckInvalidDOI(t *testing.T) {
 	}
 }
 
+// Rule 6: checkDOI must accept a legacy SICI DOI whole. The old shared
+// doiPattern excluded '"<>' from the suffix and truncated this DOI at
+// its first '<'; internal/doi.Syntactic makes the suffix opaque instead.
+func TestCheckSICIDOIAccepted(t *testing.T) {
+	const sici = `10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4`
+	p := makeCleanPaper()
+	p.DOI = sici
+	p.Bibtex.Fields["doi"] = sici
+	if problemsContain(CheckPaper(p), "does not look like a valid DOI") {
+		t.Errorf("SICI DOI %q must be accepted as syntactically valid", sici)
+	}
+}
+
+// Rule 6: checkDOI must accept a sub-divided registrant code, which the
+// old doiPattern's fixed `\d{4,9}` group (with no `(\.\d+)*` after it)
+// rejected outright.
+func TestCheckSubdividedRegistrantDOIAccepted(t *testing.T) {
+	p := makeCleanPaper()
+	p.DOI = "10.1000.10/123456"
+	p.Bibtex.Fields["doi"] = "10.1000.10/123456"
+	if problemsContain(CheckPaper(p), "does not look like a valid DOI") {
+		t.Errorf("sub-divided registrant DOI must be accepted as syntactically valid")
+	}
+}
+
 // Rule 7
 func TestCheckInvalidArxiv(t *testing.T) {
 	p := makeCleanPaper()

@@ -61,6 +61,25 @@ func TestParseRef(t *testing.T) {
 		// still just a URL; nothing better is known about it.
 		{"https://doi.org/not-a-doi",
 			Ref{Kind: RefPDFURL, URL: "https://doi.org/not-a-doi"}},
+
+		// The other doi.org URL variants must all normalise to RefDOI
+		// too, not just "https://doi.org/" - see the smaller follow-ups
+		// in the Plan C report.
+		{"http://doi.org/10.1007/BF00535479",
+			Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+		{"https://dx.doi.org/10.1007/BF00535479",
+			Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+		{"http://dx.doi.org/10.1007/BF00535479",
+			Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+		{"doi.org/10.1007/BF00535479",
+			Ref{Kind: RefDOI, DOI: "10.1007/BF00535479"}},
+
+		// A stated DOI is taken whole, untrimmed: a legacy SICI DOI must
+		// survive ParseRef intact, including through a doi.org URL.
+		{"10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4",
+			Ref{Kind: RefDOI, DOI: "10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4"}},
+		{"https://doi.org/10.1002/(SICI)1097-0258(19960229)15:4%3C361::AID-SIM168%3E3.0.CO;2-4",
+			Ref{Kind: RefDOI, DOI: "10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4"}},
 	}
 	for _, c := range cases {
 		if got := ParseRef(c.in); got != c.want {

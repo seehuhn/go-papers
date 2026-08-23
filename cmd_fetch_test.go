@@ -145,6 +145,22 @@ func overrideBases(t *testing.T, crossref, arxiv, unpaywall, zbmath, dblp, handl
 	handleBase = pick(handle)
 }
 
+// confirmingHandleServer returns the URL of a handle-resolver stub that
+// reports every DOI it is asked about as an existing handle
+// (responseCode 1). Ingest/fetch fixtures put a DOI in a PDF's page
+// text, which tier 2 now confirms through this endpoint before
+// accepting it (see pdfid.Config.ValidateDOI); a test that just needs
+// that DOI to be found, rather than exercising handle-existence
+// semantics themselves, wires this in as the handle base.
+func confirmingHandleServer(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"responseCode":1}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 func TestFetchDOIWithOA(t *testing.T) {
 	dir := fetchFixtureStore(t)
 	pdfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -682,14 +698,16 @@ func TestFetchPDFURLCreatesEntry(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	// Crossref is the only service this route may use: the DOI comes off
-	// the downloaded page, and Unpaywall exists to find a PDF we already
-	// hold. Everything else fails the test by construction.
+	// Crossref and the handle resolver are the only services this route
+	// may use: the DOI comes off the downloaded page (tier 2 confirms it
+	// through the handle resolver before accepting it, see
+	// pdfid.Config.ValidateDOI), and Unpaywall exists to find a PDF we
+	// already hold. Everything else fails the test by construction.
 	noSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("only Crossref may be consulted when the PDF is already in hand: %s", r.URL)
+		t.Errorf("only Crossref and the handle resolver may be consulted when the PDF is already in hand: %s", r.URL)
 	}))
 	t.Cleanup(noSrv.Close)
-	overrideBases(t, crossrefSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, "")
+	overrideBases(t, crossrefSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, confirmingHandleServer(t))
 
 	url := pdfSrv.URL + "/pub/cup_book_online.pdf"
 	if err := runFetch([]string{url}); err != nil {

@@ -17,6 +17,7 @@
 package pdfid
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ import (
 
 func TestIdentifyTier1CustomDOI(t *testing.T) {
 	d := &DocText{Custom: map[string]string{"doi": "10.1080/01621459.1963.10500830"}}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != "10.1080/01621459.1963.10500830" {
 		t.Errorf("id = %+v", id)
 	}
@@ -37,7 +38,7 @@ func TestIdentifyTier1CustomDOI(t *testing.T) {
 
 func TestIdentifyTier2ArxivStamp(t *testing.T) {
 	d := &DocText{Pages: []string{"arXiv:2412.05039v2 [math.PR] 6 Dec 2024\nA study of SPDEs"}}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 2 || id.ArxivID != "2412.05039" || id.Version != 2 {
 		t.Errorf("id = %+v", id)
 	}
@@ -45,7 +46,8 @@ func TestIdentifyTier2ArxivStamp(t *testing.T) {
 
 func TestIdentifyTier2DOIInText(t *testing.T) {
 	d := &DocText{Pages: []string{"", "DOI: 10.1214/aop/1176996548."}}
-	id := Identify(d, nil)
+	calls := map[string]int{}
+	id := Identify(d, Config{ValidateDOI: stubValidator(calls, "10.1214/aop/1176996548")})
 	if id.Tier != 2 || id.DOI != "10.1214/aop/1176996548" {
 		t.Errorf("trailing dot must be trimmed: %+v", id)
 	}
@@ -64,7 +66,7 @@ func TestIdentifyTier3(t *testing.T) {
 			Author: "Hoeffding",
 		}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 3 || id.DOI != "10.1080/01621459.1963.10500830" {
 		t.Errorf("id = %+v", id)
 	}
@@ -78,7 +80,7 @@ func TestIdentifyTier3LowScoreRejected(t *testing.T) {
 	search := func(guess string) (SearchHit, error) {
 		return SearchHit{DOI: "10.9999/wrong", Title: "Completely Different Paper", Score: 0.1}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 0 || id.DOI != "" {
 		t.Errorf("low similarity must not identify: %+v", id)
 	}
@@ -100,7 +102,7 @@ func TestIdentifyTier3JoinsSameSizeLines(t *testing.T) {
 		}
 		return SearchHit{DOI: "10.1234/greenland-spdes", Title: want, Score: 1.0, Author: "Voss"}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 3 || id.Title != want {
 		t.Errorf("id = %+v", id)
 	}
@@ -108,7 +110,7 @@ func TestIdentifyTier3JoinsSameSizeLines(t *testing.T) {
 
 func TestIdentifyTier1SubjectDOI(t *testing.T) {
 	d := &DocText{Subject: "doi:10.1214/aop/1176996548"}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != "10.1214/aop/1176996548" {
 		t.Errorf("id = %+v", id)
 	}
@@ -116,7 +118,7 @@ func TestIdentifyTier1SubjectDOI(t *testing.T) {
 
 func TestIdentifyScanned(t *testing.T) {
 	d := &DocText{Pages: []string{"", ""}}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if !id.Scanned || id.Tier != 0 {
 		t.Errorf("id = %+v", id)
 	}
@@ -136,7 +138,7 @@ func TestIdentifyTier1XMPDOI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != "10.1080/01621459.1963.10500830" {
 		t.Errorf("id = %+v, want the DOI from the XMP packet at tier 1", id)
 	}
@@ -147,19 +149,20 @@ func TestIdentifyTier1XMPDOI(t *testing.T) {
 //
 // This test has a history worth keeping. Originally the packet was
 // serialised back to XML and regex-scanned, which XML-escaped the angle
-// brackets into "&lt;"/"&gt;" entity text. doiRegex's [^\s"<>] character
-// class does not exclude that entity text (only the raw characters), so
-// the match ran straight through it and returned a WRONG, corrupted DOI
-// - with the literal text "&lt;"/"&gt;" embedded in it - and ok==true:
-// silent bad data. Reading the property text directly removed the
-// corruption but left doiRegex stopping at the first real '<', so the
-// DOI came back truncated to a correct prefix.
+// brackets into "&lt;"/"&gt;" entity text. The old doiRegex's
+// [^\s"<>] character class did not exclude that entity text (only the
+// raw characters), so the match ran straight through it and returned a
+// WRONG, corrupted DOI - with the literal text "&lt;"/"&gt;" embedded in
+// it - and ok==true: silent bad data. Reading the property text directly
+// removed the corruption but left doiRegex stopping at the first real
+// '<', so the DOI came back truncated to a correct prefix.
 //
 // Reading dc:identifier as a TYPED value (see xmpDOI, added with the
 // PRISM schemas) removes the truncation too: no regex is involved, so
-// the DOI comes back byte for byte. doiRegex's own '<'/'>' exclusion is
-// untouched and still truncates a SICI DOI found in page text at tier 2;
-// that remains the separately ledgered issue.
+// the DOI comes back byte for byte. The truncation itself is now fixed
+// at the source: internal/doi's Candidates excludes no suffix character,
+// so a SICI DOI found in page text at tier 2 is no longer truncated
+// either (see TestIdentifyTier2SICIExtractedWhole).
 func TestIdentifyTier1XMPSICIDOI(t *testing.T) {
 	const full = `10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4`
 
@@ -175,7 +178,7 @@ func TestIdentifyTier1XMPSICIDOI(t *testing.T) {
 	if strings.Contains(d.XMP, "&lt;") || strings.Contains(d.XMP, "&gt;") {
 		t.Errorf("XMP = %q, must contain the raw '<'/'>' characters, not XML entities", d.XMP)
 	}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != full {
 		t.Errorf("id = %+v, want the exact DOI %q at tier 1", id, full)
 	}
@@ -205,7 +208,7 @@ func TestIdentifyTier1XMPUnmodelledNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != want {
 		t.Errorf("id = %+v, want the DOI from the unmodelled CrossMark property at tier 1", id)
 	}
@@ -215,7 +218,7 @@ func TestIdentifyTier1XMPUnmodelledNamespace(t *testing.T) {
 // is found by tier 1 as well.
 func TestIdentifyTier1XMPArxiv(t *testing.T) {
 	d := &DocText{XMP: `<dc:description>arXiv:2412.05039v2</dc:description>`}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.ArxivID != "2412.05039" || id.Version != 2 {
 		t.Errorf("id = %+v", id)
 	}
@@ -232,7 +235,7 @@ func TestIdentifyTier3InfoTitleFallback(t *testing.T) {
 		}
 		return SearchHit{DOI: "10.1080/01621459.1963.10500830", Title: want, Score: 1.0, Author: "Hoeffding"}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 3 || id.DOI != "10.1080/01621459.1963.10500830" || id.Title != want {
 		t.Errorf("id = %+v", id)
 	}
@@ -249,7 +252,7 @@ func TestIdentifyTier3XMPTitleFallback(t *testing.T) {
 		}
 		return SearchHit{DOI: "10.1234/greenland-spdes", Title: want, Score: 1.0, Author: "Voss"}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 3 || id.DOI != "10.1234/greenland-spdes" {
 		t.Errorf("id = %+v", id)
 	}
@@ -263,7 +266,7 @@ func TestIdentifyTier3MetadataTitleRejected(t *testing.T) {
 	search := func(guess string) (SearchHit, error) {
 		return SearchHit{DOI: "10.9999/wrong", Title: "Completely Different Paper", Score: 0.1}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 0 || id.DOI != "" {
 		t.Errorf("low similarity must not identify: %+v", id)
 	}
@@ -276,7 +279,7 @@ func TestIdentifyTier3MetadataTitleRejected(t *testing.T) {
 // skip still applies when only a metadata title is available.
 func TestIdentifyTier3NilSearchSkipsMetadataTitle(t *testing.T) {
 	d := &DocText{Title: "Some title", XMPTitle: "Some other title", Pages: []string{""}}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 0 || id.Title != "" {
 		t.Errorf("id = %+v, want no tier-3 attempt without a search function", id)
 	}
@@ -306,7 +309,7 @@ func TestIdentifyTier3GilesMisfilingRejected(t *testing.T) {
 	search := func(g string) (SearchHit, error) {
 		return SearchHit{DOI: "10.1287/opre.1070.0496", Title: candidateTitle, Score: score, Author: "Giles"}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 0 || id.DOI != "" {
 		t.Errorf("id = %+v, want the quasi-Monte Carlo candidate rejected: score %v is below tier3MinScore", id, score)
 	}
@@ -330,7 +333,7 @@ func TestIdentifyTier3NoCorroborationRejected(t *testing.T) {
 			Score: 0.95, Author: "Smith", Year: 1999,
 		}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 0 || id.DOI != "" {
 		t.Errorf("id = %+v, want a high-similarity candidate rejected when neither its author nor its year appears in the document text", id)
 	}
@@ -351,8 +354,101 @@ func TestIdentifyTier3HighScoreWithCorroborationAccepted(t *testing.T) {
 			Score: 0.95, Author: "Smith", Year: 1999,
 		}, nil
 	}
-	id := Identify(d, search)
+	id := Identify(d, Config{Search: search})
 	if id.Tier != 3 || id.DOI != "10.1/whatever" {
 		t.Errorf("id = %+v, want the high-similarity, author-corroborated candidate accepted", id)
+	}
+}
+
+// stubValidator returns a ValidateDOIFunc that reports true for exactly
+// the DOIs in ok, false for every other candidate, and records every
+// distinct candidate it was asked about (with a call count) in calls.
+func stubValidator(calls map[string]int, ok ...string) ValidateDOIFunc {
+	want := make(map[string]bool, len(ok))
+	for _, d := range ok {
+		want[d] = true
+	}
+	return func(candidate string) (bool, error) {
+		calls[candidate]++
+		return want[candidate], nil
+	}
+}
+
+// TestIdentifyTier2SICIExtractedWhole checks that a legacy SICI DOI in
+// page text is extracted whole: it is the only (and therefore first)
+// candidate doi.Candidates offers, and the validator confirms it
+// immediately.
+func TestIdentifyTier2SICIExtractedWhole(t *testing.T) {
+	const sici = `10.1002/(SICI)1097-0258(19960229)15:4<361::AID-SIM168>3.0.CO;2-4`
+	d := &DocText{Pages: []string{"the paper is " + sici + " in full"}}
+	calls := map[string]int{}
+	id := Identify(d, Config{ValidateDOI: stubValidator(calls, sici)})
+	if id.Tier != 2 || id.DOI != sici {
+		t.Errorf("id = %+v, want the SICI DOI extracted whole at tier 2", id)
+	}
+	if calls[sici] != 1 {
+		t.Errorf("calls[sici] = %d, want exactly 1", calls[sici])
+	}
+}
+
+// TestIdentifyTier2LadderRejectsRawAcceptsTrimmed checks the ladder
+// itself: the raw match "10.1234/abc." carries a trailing sentence
+// period that is not part of the DOI. The validator rejects that raw
+// form and confirms the trimmed one, which tier 2 must then report.
+func TestIdentifyTier2LadderRejectsRawAcceptsTrimmed(t *testing.T) {
+	d := &DocText{Pages: []string{"DOI: 10.1234/abc."}}
+	calls := map[string]int{}
+	id := Identify(d, Config{ValidateDOI: stubValidator(calls, "10.1234/abc")})
+	if id.Tier != 2 || id.DOI != "10.1234/abc" {
+		t.Errorf("id = %+v, want the trimmed candidate accepted", id)
+	}
+	if calls["10.1234/abc."] != 1 || calls["10.1234/abc"] != 1 {
+		t.Errorf("calls = %v, want exactly one call for each ladder rung", calls)
+	}
+}
+
+// TestIdentifyTier2ValidatorErrorFallsBackToRawMatch checks the error
+// path: when the validator cannot answer (a network failure, say), tier
+// 2 stops validating and falls back to the full greedy, untrimmed match
+// rather than losing the DOI entirely - preserving the old regex scan's
+// behaviour of just taking whatever it found. The trailing period here
+// is never stripped: the fallback is deliberately unvalidated.
+func TestIdentifyTier2ValidatorErrorFallsBackToRawMatch(t *testing.T) {
+	d := &DocText{Pages: []string{"DOI: 10.1234/abc."}}
+	wantErr := errors.New("handle: network unreachable")
+	calls := 0
+	validate := func(candidate string) (bool, error) {
+		calls++
+		return false, wantErr
+	}
+	id := Identify(d, Config{ValidateDOI: validate})
+	if id.Tier != 2 || id.DOI != "10.1234/abc." {
+		t.Errorf("id = %+v, want the raw untrimmed match %q on validator error", id, "10.1234/abc.")
+	}
+	if calls != 1 {
+		t.Errorf("validator was called %d times, want exactly 1 (stop validating on error)", calls)
+	}
+}
+
+// TestIdentifyTier2Memoises checks that the same candidate string is
+// never validated twice within one Identify call, even though it occurs
+// twice in the scanned text: once as the raw match of its first
+// occurrence, once as the trimmed rung of the ladder for its second,
+// punctuation-suffixed occurrence.
+func TestIdentifyTier2Memoises(t *testing.T) {
+	d := &DocText{Pages: []string{"cf. 10.1234/abc and again 10.1234/abc."}}
+	calls := map[string]int{}
+	// Neither rung validates true, so tier 2 (and then tier 3, which is
+	// skipped: no search function) end up unidentified - the point of
+	// this test is the call count, not the outcome.
+	id := Identify(d, Config{ValidateDOI: stubValidator(calls)})
+	if id.Tier != 0 {
+		t.Errorf("id = %+v, want no identification (validator confirms nothing)", id)
+	}
+	if calls["10.1234/abc"] != 1 {
+		t.Errorf("calls[%q] = %d, want exactly 1 (memoised across both occurrences)", "10.1234/abc", calls["10.1234/abc"])
+	}
+	if calls["10.1234/abc."] != 1 {
+		t.Errorf("calls[%q] = %d, want exactly 1", "10.1234/abc.", calls["10.1234/abc."])
 	}
 }

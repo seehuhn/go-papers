@@ -214,7 +214,7 @@ func TestPrismSICIDOIExact(t *testing.T) {
 		t.Errorf("Prism.DOI = %q, want the exact SICI DOI %q", d.Prism.DOI, full)
 	}
 
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != full {
 		t.Errorf("id = %+v, want the exact SICI DOI at tier 1", id)
 	}
@@ -465,7 +465,7 @@ func TestIdentifyTier1PrismBeatsInfoDict(t *testing.T) {
 		Prism:   &PrismInfo{DOI: "10.1234/right"},
 		XMPDOI:  "10.1234/right",
 	}
-	id := Identify(d, nil)
+	id := Identify(d, Config{})
 	if id.Tier != 1 || id.DOI != "10.1234/right" {
 		t.Errorf("id = %+v, want the typed prism:doi at tier 1", id)
 	}

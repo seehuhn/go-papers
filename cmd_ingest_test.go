@@ -45,17 +45,25 @@ func makeIngestPDF(t *testing.T, path, title, doi string) {
 	pdfidtest.MakePDF(t, path, title, "Test Author", lines, []float64{24, 10})
 }
 
-// guardBases points every online service at a server that fails the test
-// if it is contacted. A test whose files must resolve locally uses it, so
-// that reaching a live service is a failure by construction rather than
-// something the fixtures happen to avoid.
+// guardBases points every bibliographic-search service at a server that
+// fails the test if it is contacted. A test whose files must resolve
+// locally, without any title search or download, uses it, so that
+// reaching one of those services is a failure by construction rather
+// than something the fixtures happen to avoid.
+//
+// The handle resolver is the one exception: tier 2 now confirms a DOI
+// extracted from a PDF's page text through it before accepting the DOI
+// (see pdfid.Config.ValidateDOI), so -into's identity check legitimately
+// consults it even though nothing else here should be reached.
+// confirmingHandleServer reports every DOI as existing, which is all
+// these tests need - they are not testing handle-existence semantics.
 func guardBases(t *testing.T) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("no online service may be contacted here: %s", r.URL)
 	}))
 	t.Cleanup(srv.Close)
-	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL, "")
+	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL, confirmingHandleServer(t))
 }
 
 // assertUntouched checks that an entry gained nothing from a run that was
@@ -168,7 +176,7 @@ func TestIngestBatchCreatesEntries(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse) // always the Hoeffding record
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", confirmingHandleServer(t))
 	f := filepath.Join(t.TempDir(), "paper.pdf")
 	makeIngestPDF(t, f, "Probability inequalities", "10.1080/01621459.1963.10500830")
 
@@ -317,7 +325,7 @@ func TestIngestBatchPartialFailure(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", confirmingHandleServer(t))
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "scan.pdf")
 	good := filepath.Join(dir, "paper.pdf")
@@ -363,7 +371,7 @@ func TestIngestBatchSurvivesStatFailure(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", confirmingHandleServer(t))
 
 	good := filepath.Join(t.TempDir(), "good.pdf")
 	makeIngestPDF(t, good, "Probability inequalities", "10.1080/01621459.1963.10500830")
