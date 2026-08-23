@@ -107,10 +107,17 @@ func abs(n int) int {
 // diffAgainstStore reports where the bib entry disagrees with the store
 // entry, which is the authority for anything the store holds. A field the
 // bib entry has and the store lacks is never reported — the bibliography
-// may legitimately carry `note` or `url`.
+// may legitimately carry `note` or `url`. Fields are visited in
+// bibtex.FieldOrder, then any remaining store field names sorted
+// alphabetically, matching bibtex.Format's convention — never in map
+// order, which varies from run to run.
 func diffAgainstStore(e bibtex.KeyedEntry, p *store.Paper) []string {
 	var out []string
-	for name, storeVal := range p.Bibtex.Fields {
+	for _, name := range storeFieldOrder(p.Bibtex.Fields) {
+		storeVal := p.Bibtex.Fields[name]
+		if strings.TrimSpace(storeVal) == "" {
+			continue
+		}
 		bibVal, ok := e.Entry.Fields[name]
 		if !ok || strings.TrimSpace(bibVal) == "" {
 			out = append(out, fmt.Sprintf("missing field %q (store has %q)", name, storeVal))
@@ -124,6 +131,29 @@ func diffAgainstStore(e bibtex.KeyedEntry, p *store.Paper) []string {
 		out = append(out, fmt.Sprintf("missing field %q (store has %q)", "doi", p.DOI))
 	}
 	return out
+}
+
+// storeFieldOrder returns the names in fields in a deterministic order:
+// bibtex.FieldOrder's fields first (in that order), then any remaining
+// field names sorted alphabetically — the same convention bibtex.Format
+// uses for known-vs-unknown fields.
+func storeFieldOrder(fields map[string]string) []string {
+	seen := make(map[string]bool, len(fields))
+	var out []string
+	for _, name := range bibtex.FieldOrder {
+		if _, ok := fields[name]; ok {
+			out = append(out, name)
+			seen[name] = true
+		}
+	}
+	var rest []string
+	for name := range fields {
+		if !seen[name] {
+			rest = append(rest, name)
+		}
+	}
+	sort.Strings(rest)
+	return append(out, rest...)
 }
 
 // foldedJoin folds s into its tokens (see match.Tokens) and rejoins them

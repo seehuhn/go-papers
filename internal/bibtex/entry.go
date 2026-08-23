@@ -42,8 +42,13 @@ var FieldOrder = []string{
 var RequiredFields = map[string][][]string{
 	"article":       {{"author"}, {"title"}, {"journal"}, {"year"}},
 	"book":          {{"author", "editor"}, {"title"}, {"publisher"}, {"year"}},
+	"inbook":        {{"author", "editor"}, {"title"}, {"chapter", "pages"}, {"publisher"}, {"year"}},
 	"incollection":  {{"author"}, {"title"}, {"booktitle"}, {"publisher"}, {"year"}},
 	"inproceedings": {{"author"}, {"title"}, {"booktitle"}, {"year"}},
+	"conference":    {{"author"}, {"title"}, {"booktitle"}, {"year"}}, // alias of inproceedings
+	"proceedings":   {{"title"}, {"year"}},
+	"manual":        {{"title"}},
+	"booklet":       {{"title"}},
 	"phdthesis":     {{"author"}, {"title"}, {"school"}, {"year"}},
 	"mastersthesis": {{"author"}, {"title"}, {"school"}, {"year"}},
 	"techreport":    {{"author"}, {"title"}, {"institution"}, {"year"}},

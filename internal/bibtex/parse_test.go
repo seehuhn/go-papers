@@ -99,6 +99,44 @@ func TestParseStringMacrosAndConcatenation(t *testing.T) {
 	}
 }
 
+// TestParseBuiltinMonthMacros pins Finding 2: bibtex's twelve built-in
+// three-letter month macros (jan...dec) must be predefined, matching what
+// bibtex styles render — the conventional English month name.
+func TestParseBuiltinMonthMacros(t *testing.T) {
+	want := map[string]string{
+		"jan": "January", "feb": "February", "mar": "March", "apr": "April",
+		"may": "May", "jun": "June", "jul": "July", "aug": "August",
+		"sep": "September", "oct": "October", "nov": "November", "dec": "December",
+	}
+	for macro, expansion := range want {
+		in := "@article{k,\n  month = " + macro + ",\n}"
+		got, err := Parse(strings.NewReader(in))
+		if err != nil {
+			t.Fatalf("Parse(month = %s): %v", macro, err)
+		}
+		if got[0].Entry.Fields["month"] != expansion {
+			t.Errorf("month = %q, want %q", got[0].Entry.Fields["month"], expansion)
+		}
+	}
+}
+
+// TestParseUserStringOverridesBuiltinMonthMacro pins the last-definition-
+// wins rule: a user @string redefining a built-in month macro overrides
+// it, matching bibtex itself.
+func TestParseUserStringOverridesBuiltinMonthMacro(t *testing.T) {
+	in := `@string{mar = {Custom March}}
+@article{k,
+  month = mar,
+}`
+	got, err := Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got[0].Entry.Fields["month"] != "Custom March" {
+		t.Errorf("month = %q, want %q (user @string should override the built-in)", got[0].Entry.Fields["month"], "Custom March")
+	}
+}
+
 func TestParseUnknownMacroIsAnError(t *testing.T) {
 	_, err := Parse(strings.NewReader("@article{k,\n  journal = nosuchmacro,\n}"))
 	if err == nil {

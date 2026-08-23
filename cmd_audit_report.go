@@ -83,6 +83,14 @@ func renderProse(r *auditReport) string {
 	if len(notFound) > 0 {
 		b.WriteString("\nNot found:\n")
 		for _, e := range notFound {
+			if e.StoreKey != "" {
+				// Should be unreachable: run() clamps a store match's
+				// notFound verdict to unverified before it ever gets here.
+				// But the accusation must never render without the
+				// counter-evidence, so print it anyway if it does.
+				fmt.Fprintf(&b, "%s: no source returned any candidate, but held in the store as %s — not hallucinated\n", e.Key, e.StoreKey)
+				continue
+			}
 			fmt.Fprintf(&b, "%s: no source returned any candidate — likely hallucinated\n", e.Key)
 		}
 	}
@@ -116,7 +124,11 @@ func renderProse(r *auditReport) string {
 	if len(confirmed) > 0 {
 		names := make([]string, len(confirmed))
 		for i, e := range confirmed {
-			names[i] = fmt.Sprintf("%s -> %s", e.Key, e.StoreKey)
+			if e.StoreKey != "" {
+				names[i] = fmt.Sprintf("%s -> %s", e.Key, e.StoreKey)
+			} else {
+				names[i] = e.Key
+			}
 			if e.Claims > 0 {
 				noun := "claims"
 				if e.Claims == 1 {

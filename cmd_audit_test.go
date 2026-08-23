@@ -32,6 +32,21 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+// TestQualityProblemsAcceptsManual pins Finding 3: standard BibTeX entry
+// types (here, manual) must not be rejected as unknown.
+func TestQualityProblemsAcceptsManual(t *testing.T) {
+	e := bibtex.KeyedEntry{Key: "m", Entry: bibtex.Entry{Type: "manual",
+		Fields: map[string]string{"title": "Some Manual"}}}
+
+	got := qualityProblems(e)
+
+	for _, p := range got {
+		if strings.Contains(p, "unknown entry type") {
+			t.Errorf("manual is a standard bibtex type, must not be unknown: %v", got)
+		}
+	}
+}
+
 func TestAuditConfirmsAResolvableDOI(t *testing.T) {
 	dir := initStore(t, "test@example.org")
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -483,6 +498,51 @@ func TestAuditNeverWritesToTheStore(t *testing.T) {
 
 	if after := storeSnapshot(t, dir); after != before {
 		t.Errorf("audit is read-only but the store changed:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// TestAuditStoreHeldDraftIsNeverCalledHallucinated pins Finding 1: a bib
+// entry that matches a store entry the store actually holds must never be
+// reported as "likely hallucinated", even when the store entry is a draft
+// (so it falls through to online verification) and every online source
+// comes back empty. The accusation is false on its face — the store holds
+// the paper — so the clamp must turn the verdict into "unverified" and
+// name the store key as counter-evidence instead.
+func TestAuditStoreHeldDraftIsNeverCalledHallucinated(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	s := openConfiguredStore(t)
+	p := &store.Paper{Key: "giles_2008", Status: "draft", Holdings: "published",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Giles, Michael B.", "title": "Multilevel Monte Carlo path simulation",
+			"journal": "Oper. Res.", "year": "2008"}}}
+	if err := s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"message":{"items":[]}}`)
+	}))
+	t.Cleanup(empty.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL)
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(bibForPaper(p)), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	if strings.Contains(out, "likely hallucinated") {
+		t.Errorf("a store-held entry must never be called likely hallucinated:\n%s", out)
+	}
+	if !strings.Contains(out, "giles_2008") {
+		t.Errorf("output should name the store key as counter-evidence:\n%s", out)
 	}
 }
 

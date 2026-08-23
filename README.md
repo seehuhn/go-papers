@@ -225,15 +225,17 @@ paper — against reality, without touching the store. Every entry is
 matched against the store by DOI, then arXiv ID, then title; a match
 against a `clean` store entry is diffed field by field, and the store is
 the authority for anything it holds, since a clean entry has already
-passed `paper check`. What the store lacks falls back to the network
-(Crossref, arXiv, zbMATH, DBLP), unless `-online` is given, in which case
-even store-held entries are re-verified against their sources too.
+passed `paper check`. A reference the store does not hold is always
+checked against the network (Crossref, arXiv, zbMATH, DBLP); `-online`
+does not gate that — it only adds re-verification of store-held entries
+against their sources too.
 
-Each reference gets one of three verdicts: `confirmed` (matched a clean
+Each reference gets one of four verdicts: `confirmed` (matched a clean
 store entry, or verified online), `unverified` (a source returned a
-plausible but not clearly matching candidate), or `notFound` (no source
-returned anything — likely a hallucinated reference). `-json` prints the
-full report as JSON instead of prose.
+plausible but not clearly matching candidate), `notFound` (no source
+returned anything — likely a hallucinated reference), or `unchecked` (not
+looked up, e.g. because a source was down, so nothing was proved either
+way). `-json` prints the full report as JSON instead of prose.
 
 ```
 $ paper audit refs.bib

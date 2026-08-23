@@ -48,8 +48,21 @@ func Parse(r io.Reader) ([]KeyedEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading bibtex: %w", err)
 	}
-	p := &parser{src: src, line: 1, macro: make(map[string]string)}
+	p := &parser{src: src, line: 1, macro: builtinMonthMacros()}
 	return p.file()
+}
+
+// builtinMonthMacros returns the twelve three-letter month macros bibtex
+// predefines (jan...dec), expanded to the conventional month name that
+// bibtex styles render. A file's own @string definitions are applied
+// after this map is seeded, so a user redefinition of e.g. "mar" wins,
+// matching bibtex's last-definition-wins rule.
+func builtinMonthMacros() map[string]string {
+	return map[string]string{
+		"jan": "January", "feb": "February", "mar": "March", "apr": "April",
+		"may": "May", "jun": "June", "jul": "July", "aug": "August",
+		"sep": "September", "oct": "October", "nov": "November", "dec": "December",
+	}
 }
 
 // next returns the current byte and advances past it, tracking the line

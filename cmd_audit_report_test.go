@@ -42,6 +42,44 @@ func TestRenderProseGroupsByVerdict(t *testing.T) {
 	}
 }
 
+// TestRenderProseConfirmedWithoutStoreMatchHasNoDanglingArrow pins Finding
+// 7: an entry confirmed online (no store match at all) must render as a
+// bare key, not "key -> " with nothing after the arrow.
+func TestRenderProseConfirmedWithoutStoreMatchHasNoDanglingArrow(t *testing.T) {
+	r := &auditReport{Entries: []auditEntry{
+		{Key: "onlineonly", Existence: "confirmed"},
+	}}
+
+	out := renderProse(r)
+
+	if strings.Contains(out, "onlineonly -> ") || strings.Contains(out, "onlineonly ->\n") {
+		t.Errorf("confirmed entry without a store match must not have a dangling arrow:\n%s", out)
+	}
+	if !strings.Contains(out, "Confirmed: onlineonly\n") {
+		t.Errorf("confirmed entry without a store match should render as a bare key:\n%s", out)
+	}
+}
+
+// TestRenderProseNotFoundWithStoreKeyNamesItInstead is defense in depth
+// for Finding 1: even if a notFound verdict somehow carries a StoreKey
+// (run() should have clamped it to unverified before this point), the
+// prose must never accuse the entry of being likely hallucinated without
+// printing the store key as counter-evidence.
+func TestRenderProseNotFoundWithStoreKeyNamesItInstead(t *testing.T) {
+	r := &auditReport{Entries: []auditEntry{
+		{Key: "ghost", Existence: "notFound", StoreKey: "ghost_2020"},
+	}}
+
+	out := renderProse(r)
+
+	if strings.Contains(out, "ghost: no source returned any candidate — likely hallucinated") {
+		t.Errorf("a store-held key must never be accused without its counter-evidence:\n%s", out)
+	}
+	if !strings.Contains(out, "ghost_2020") {
+		t.Errorf("output should name the store key:\n%s", out)
+	}
+}
+
 func TestRenderJSONIsParseable(t *testing.T) {
 	r := &auditReport{Entries: []auditEntry{{Key: "k", Existence: "confirmed", StoreKey: "k_1999"}}}
 

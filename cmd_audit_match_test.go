@@ -67,7 +67,11 @@ func TestDiffAgainstStoreReportsDisagreement(t *testing.T) {
 		DOI: "10.1080/01621459.1963.10500830",
 		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
 			"author": "Hoeffding, Wassily", "title": "Probability inequalities",
-			"journal": "J. Amer. Statist. Assoc.", "year": "1963"}}}
+			"journal": "J. Amer. Statist. Assoc.", "year": "1963",
+			// A blank store field (Finding 8): must never be reported as
+			// "missing field \"note\" (store has \"\")" — an empty store
+			// value is nothing to be missing.
+			"note": ""}}}
 	e := bibtex.KeyedEntry{Key: "hoef", Entry: bibtex.Entry{Type: "article",
 		Fields: map[string]string{
 			"author": "Hoeffding, W.", "title": "Probability inequalities",
@@ -79,6 +83,35 @@ func TestDiffAgainstStoreReportsDisagreement(t *testing.T) {
 	for _, want := range []string{"year", "1963", "journal", "doi"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("diff should mention %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, `"note"`) {
+		t.Errorf("a blank store field must not be reported as missing:\n%s", joined)
+	}
+}
+
+// TestDiffAgainstStoreOrderIsDeterministic pins Finding 6: diffAgainstStore
+// must not iterate a Go map directly into its output, or the order of the
+// reported problems varies from run to run. It uses a store entry with
+// enough disagreeing fields — both bibtex.FieldOrder fields and an unknown
+// one — that map-iteration nondeterminism would show up within a handful
+// of runs.
+func TestDiffAgainstStoreOrderIsDeterministic(t *testing.T) {
+	p := &store.Paper{Key: "many", Status: "clean",
+		DOI: "10.1000/many",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "A, One", "title": "T", "journal": "J", "year": "2001",
+			"volume": "1", "number": "2", "pages": "1--10", "publisher": "Pub",
+			"note": "N", "mrnumber": "12345",
+		}}}
+	e := bibtex.KeyedEntry{Key: "many", Entry: bibtex.Entry{Type: "article",
+		Fields: map[string]string{"title": "T"}}}
+
+	first := diffAgainstStore(e, p)
+	for i := 0; i < 10; i++ {
+		got := diffAgainstStore(e, p)
+		if strings.Join(got, "\n") != strings.Join(first, "\n") {
+			t.Fatalf("diffAgainstStore order is nondeterministic:\nrun 0: %v\nrun %d: %v", first, i+1, got)
 		}
 	}
 }

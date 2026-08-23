@@ -126,6 +126,18 @@ func (a *auditor) run(entries []bibtex.KeyedEntry) *auditReport {
 		switch {
 		case item.Existence != "confirmed":
 			item.Existence, item.Candidates = a.verify(e)
+			// A store match is itself evidence the paper exists — the store
+			// holds it. Online silence can never outweigh that, so a
+			// notFound verdict on a store-matched entry is clamped to
+			// unverified, with the store key recorded as the counter-
+			// evidence "likely hallucinated" would otherwise contradict.
+			// (A draft match is never promoted all the way to confirmed —
+			// only the "clean" case above does that.)
+			if item.StoreKey != "" && item.Existence == "notFound" {
+				item.Existence = "unverified"
+				item.Problems = append(item.Problems, fmt.Sprintf(
+					"held in the store as %s; no online source knows it", item.StoreKey))
+			}
 		case a.online:
 			if verdict, cands := a.verify(e); verdict != "confirmed" {
 				item.Problems = append(item.Problems, fmt.Sprintf("online re-verification: %s", verdict))

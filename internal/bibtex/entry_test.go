@@ -52,6 +52,23 @@ func TestRequiredFields(t *testing.T) {
 	}
 }
 
+// TestRequiredFieldsIncludesStandardTypes pins Finding 3: inbook,
+// proceedings, manual, booklet and conference are standard BibTeX entry
+// types and must not be rejected as unknown.
+func TestRequiredFieldsIncludesStandardTypes(t *testing.T) {
+	for _, typ := range []string{"inbook", "proceedings", "manual", "booklet", "conference"} {
+		if _, ok := RequiredFields[typ]; !ok {
+			t.Errorf("no required fields for standard type %q", typ)
+		}
+	}
+}
+
+func TestRequiredFieldsConferenceMatchesInproceedings(t *testing.T) {
+	if got, want := RequiredFields["conference"], RequiredFields["inproceedings"]; len(got) != len(want) {
+		t.Errorf("conference required fields = %v, want same as inproceedings %v", got, want)
+	}
+}
+
 func TestFormatUnknownFields(t *testing.T) {
 	// Test that unknown fields are sorted alphabetically after known fields.
 	// This test uses unknown fields (zzz, abstract, mrnumber) mixed with known ones.
