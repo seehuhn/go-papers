@@ -11,13 +11,12 @@ go install seehuhn.de/go/paper@latest
 ## The store
 
 The store is a plain directory, in a location of your choosing: one
-subdirectory per paper, named by its citation key, plus a marker file, an
-inbox drop zone and an event log.
+subdirectory per paper, named by its citation key, plus a marker file and
+an event log.
 
 ```
 ~/Papers/
 ├── .paper-store.json      marker: this directory is a paper store
-├── inbox/                 drop zone for PDFs awaiting ingest
 ├── events/                local, best-effort log of command outcomes
 └── <key>/                 one directory per paper
     ├── paper.json             single source of truth (see schema below)
@@ -165,6 +164,12 @@ searched at Crossref. Nothing is downloaded — the file is already held, so
 the services are asked for metadata only. `-since` drops files older than a
 timestamp, and `-doi`/`-arxiv` say outright what a single file is, skipping
 identification.
+
+Once a file has resolved to a DOI, the PRISM metadata publishers embed in
+the PDF's XMP packet fills the gaps Crossref left: journal, volume, number,
+pages and ISSN. Crossref stays authoritative — a field it answered is never
+overwritten — so this only ever adds, and it adds exactly the bibliographic
+detail the file itself is most likely to carry.
 
 `-into` is the hand-off from a failed `fetch`: once the agent has the PDF,
 it attaches that one file to the entry `fetch` left behind, after checking
