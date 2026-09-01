@@ -96,3 +96,25 @@ func openConfiguredStore(t *testing.T) *store.Store {
 	}
 	return s
 }
+
+// captureStderr is captureStdout for os.Stderr: it runs fn with
+// os.Stderr redirected to a pipe and returns everything fn printed
+// there.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating pipe: %v", err)
+	}
+	os.Stderr = w
+	fn()
+	w.Close()
+	os.Stderr = old
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stderr: %v", err)
+	}
+	return string(data)
+}

@@ -33,9 +33,47 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+const ingestHelp = `usage: paper ingest [options] <file.pdf> ...
+
+Take PDF files that are already on disk, work out which paper each one
+is, and MOVE them into the store. Nothing is ever downloaded; the
+online services are consulted for metadata only. For a PDF that is
+still behind a URL, use "paper fetch <url>" instead.
+
+Without flags, each file is identified from its own contents, resolved
+online, and given a fresh draft entry.
+
+-into attaches to an existing entry and is all-or-nothing: after the
+-since filter, exactly one file must survive, and a file that cannot
+be read blocks the run just as a second survivor would. With zero or
+several survivors the command fails and lists what it found. The
+surviving file is verified against the entry by title before it is
+moved, so the wrong PDF is refused rather than filed.
+
+In bash, glob patterns such as ~/Downloads/*.pdf need
+"shopt -s nullglob" first: without it an unmatched pattern is passed
+through as a literal path, counts as a failed file, and blocks an
+-into run.
+
+-doi and -arxiv skip identification and say outright what the single
+given file is.
+
+options:
+    -arxiv <id>    skip identification: the file is this arXiv e-print
+    -doi <doi>     skip identification: the file is the paper with this DOI
+    -into <key>    attach the single surviving file to this existing entry
+    -since <time>  ignore files last modified before this time
+                   (RFC3339, or 2006-01-02T15:04:05 in local time)
+    -store <dir>   path to the paper store (overrides the configured store)
+`
+
 func init() {
 	commands = append(commands, command{
-		"ingest", "identify PDF files and move them into the store", runIngest})
+		name: "ingest",
+		desc: "identify PDF files and move them into the store",
+		help: ingestHelp,
+		run:  runIngest,
+	})
 }
 
 // ingestPages is how many pages of a PDF are searched for a DOI or an

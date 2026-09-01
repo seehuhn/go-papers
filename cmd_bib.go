@@ -27,8 +27,24 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+const bibHelp = `usage: paper bib [options] <key> ...
+
+Export BibTeX for the given keys, or for the whole store with -all,
+sorted by key with blank lines between entries. An unknown key is an
+error; find keys with "paper search".
+
+options:
+    -all          export all papers in the store
+    -store <dir>  path to the paper store (overrides the configured store)
+`
+
 func init() {
-	commands = append(commands, command{"bib", "export bibliography entries in BibTeX format", runBib})
+	commands = append(commands, command{
+		name: "bib",
+		desc: "export bibliography entries in BibTeX format",
+		help: bibHelp,
+		run:  runBib,
+	})
 }
 
 // runBib implements the "paper bib" command: it loads one or more papers

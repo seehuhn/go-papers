@@ -27,8 +27,30 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+const initHelp = `usage: paper init [options] <dir>
+
+Prepare <dir> as a paper store and record it in the config file, which
+every other command reads to find the store. Run on a directory that
+is already a store, init just adopts it - that is how a second machine
+is pointed at a synced store.
+
+The config file is ~/.paper.json, or the file named by $PAPER_CONFIG.
+Nothing is created until the config has been checked: pointing the
+config at a different store than it already names requires -force,
+and never happens silently.
+
+options:
+    -email <address>  contact address to send to Crossref and Unpaywall
+    -force            point the config at a different store than before
+`
+
 func init() {
-	commands = append(commands, command{"init", "create a paper store and point the config at it", runInit})
+	commands = append(commands, command{
+		name: "init",
+		desc: "create a paper store and point the config at it",
+		help: initHelp,
+		run:  runInit,
+	})
 }
 
 // runInit prepares a directory as a paper store and records it in the
@@ -41,6 +63,7 @@ func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	email := fs.String("email", "", "contact address to send to Crossref and Unpaywall")
 	force := fs.Bool("force", false, "point the config at a different store than before")
+	fs.Usage = func() { fmt.Fprint(fs.Output(), helpFor("init")) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil

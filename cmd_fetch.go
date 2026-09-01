@@ -33,9 +33,45 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+const fetchHelp = `usage: paper fetch [options] <ref>
+
+Resolve a reference online, create a store entry for it, and download
+what can be fetched reliably by script. <ref> may be a DOI, an arXiv
+ID or URL, free text ("Author, Title, year"), or the URL of a PDF.
+
+Metadata is resolved against Crossref, arXiv, zbMATH Open, DBLP and
+Unpaywall. The scriptable download routes are the arXiv PDF plus its
+extracted tex source, and a direct open-access PDF URL; everything
+else is left for the caller to hunt down.
+
+When no download route works, the draft entry is still created and the
+command exits nonzero. The error message carries everything learned
+while resolving - authors, title, the doi.org link, the Unpaywall
+verdict. Act on that message; do not re-derive its contents.
+
+Given the URL of a PDF, the file is downloaded and identified from its
+own contents. When identification fails nothing is written, and the
+error reports what the file said about itself together with ready-made
+retry command lines using -doi (the file carries no usable identifier;
+it is the paper with this DOI) or -into (attach the file to an
+existing entry, verified against the entry by title).
+
+For a PDF that is already a local file, use "paper ingest" instead.
+
+options:
+    -doi <doi>    for a PDF URL: skip identification, the file is the paper with this DOI
+    -dry-run      resolve and report, without writing to the store or downloading
+    -into <key>   for a PDF URL: attach the downloaded file to this existing entry
+    -store <dir>  path to the paper store (overrides the configured store)
+`
+
 func init() {
 	commands = append(commands, command{
-		"fetch", "resolve a reference online and download what is scriptable", runFetch})
+		name: "fetch",
+		desc: "resolve a reference online and download what is scriptable",
+		help: fetchHelp,
+		run:  runFetch,
+	})
 }
 
 // Base URLs of the online services fetch and audit talk to. These are

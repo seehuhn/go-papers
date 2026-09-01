@@ -28,8 +28,64 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+const auditHelp = `usage: paper audit [options] <refs.bib>
+
+Check a bibliography file against the store and, where the store does
+not already know, against the online sources (Crossref, arXiv, zbMATH,
+DBLP). Audit is read-only: it never writes to the store.
+
+Each reference is matched against the store by DOI, then arXiv ID,
+then title; a title match needs similarity of at least 0.9 AND
+corroboration (first-author surname, or year within one) - a title
+alone never counts as a match. A match against a clean store entry is
+authoritative: the store has already passed "paper check", so its
+fields win over the .bib's.
+
+Every reference gets one of four existence verdicts:
+
+    confirmed   an identifier resolved, the store held a clean entry,
+                or a corroborated search hit cleared the title bar
+    unverified  candidates exist but none clears the bar; up to three
+                are listed with scores - a request for judgement, not
+                a finding either way
+    notFound    every source that could answer, answered, and returned
+                nothing - the only verdict that supports calling a
+                reference invented
+    unchecked   every source that could have answered errored out, so
+                nothing was established either way; not a finding
+
+The prose report prints notFound as "not found", and unchecked entries
+under "Not checked:"; -json keeps the camelCase verdict names, so
+match against those when scripting. A "Problems:" section lists
+completeness and quality issues (missing required fields, a field
+disagreeing with the store, duplicate citation keys) and fires on
+confirmed entries too - existing is not the same as being correct. A
+malformed .bib entry is listed as skipped with its line number, and
+the rest of the file is still audited.
+
+The "Confirmed:" line maps each reference to its store key, with a
+claims count ("2 claims recorded") when the matched entry carries
+recorded semantic-verification claims. The -json output additionally
+carries each matched entry's holdings (none/preprint/published/both),
+which the prose report never prints.
+
+options:
+    -json         emit the report as JSON
+    -online       re-verify store-held entries against their sources
+                  too; a store-confirmed entry is never demoted by
+                  online disagreement - the paper is held, so the
+                  disagreement surfaces as a problem note alongside
+                  the still-confirmed verdict
+    -store <dir>  path to the paper store (overrides the configured store)
+`
+
 func init() {
-	commands = append(commands, command{"audit", "check a bibliography against the store and the sources", runAudit})
+	commands = append(commands, command{
+		name: "audit",
+		desc: "check a bibliography against the store and the sources",
+		help: auditHelp,
+		run:  runAudit,
+	})
 }
 
 // runAudit implements the "paper audit" command: it parses a .bib file,

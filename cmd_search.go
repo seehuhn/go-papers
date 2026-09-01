@@ -32,8 +32,43 @@ import (
 	"seehuhn.de/go/paper/internal/tex"
 )
 
+const searchHelp = `usage: paper search [options] [<term> ...]
+
+Ranked metadata search over the whole store. Every term must match.
+Terms are matched against metadata only, never against the contents of
+held files. At least one term or one filter option is required.
+
+Plain output is one line per hit:
+
+    <key>  <Surname> (<year>)  <title>  [<holdings>] [draft] [deprecated:<file>]
+
+The bracketed flags at the end of the line are the holdings value
+(none, preprint, published, both), then "draft" while the entry has not
+yet passed "paper check", and one "deprecated:<file>" per held file
+marked deprecated. Long titles are truncated to keep lines short.
+
+With -json the hits are printed instead as a JSON array of objects with
+the fields key, score, authors, title, year, holdings, status, and
+flags (the same draft/deprecated markers, as an array of strings).
+Use -json whenever the output is parsed rather than read.
+
+options:
+    -holdings <h>  only papers whose holdings is <h>
+    -json          print results as a JSON array
+    -status <s>    only papers with this status (draft, clean)
+    -store <dir>   path to the paper store (overrides the configured store)
+
+An empty result means the store does not hold the paper; acquiring it
+is "paper fetch"'s job.
+`
+
 func init() {
-	commands = append(commands, command{"search", "search the store for papers", runSearch})
+	commands = append(commands, command{
+		name: "search",
+		desc: "search the store for papers",
+		help: searchHelp,
+		run:  runSearch,
+	})
 }
 
 // maxHitLineRunes is the maximum length, in runes, of one human-readable

@@ -33,9 +33,12 @@ import (
 // newFlagSet returns the standard flag set for a paper subcommand: named
 // after the command, ContinueOnError semantics, and the shared -store
 // flag. The returned string pointer holds the -store value after Parse.
+// Usage (what -h prints) is the command's full help text, which lists
+// the options itself, so PrintDefaults is not called.
 func newFlagSet(name string) (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	storeFlag := fs.String("store", "", "path to the paper store (overrides the configured store)")
+	fs.Usage = func() { fmt.Fprint(fs.Output(), helpFor(name)) }
 	return fs, storeFlag
 }
 

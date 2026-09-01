@@ -32,8 +32,39 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
+const checkHelp = `usage: paper check [options] [<key> ...]
+
+Validate store entries, printing one line per problem. With keys, only
+those entries are checked. With no keys the whole store is checked,
+including store-wide invariants: files listed in an entry's versions
+but missing on disk, files present but not listed, and stray
+*.sync-conflict-* files left by the file synchroniser. Any draft entry
+found to be free of problems is promoted to clean automatically.
+
+The exit status is 0 when nothing of error severity was found;
+warnings alone do not fail the run. Error messages are prose meant to
+be acted on directly.
+
+Among much else, check catches the usual hand-editing mistakes in
+paper.json - an undoubled backslash in a bibtex value, an unknown
+field name, a claim recorded against a file the entry does not hold -
+so every hand edit should be followed by a "paper check <key>" run.
+See "paper help schema" for the file format itself.
+
+options:
+    -online       also verify each entry's DOI against Crossref: a DOI
+                  that does not resolve is an error, a title/year
+                  disagreement with the Crossref record only a warning
+    -store <dir>  path to the paper store (overrides the configured store)
+`
+
 func init() {
-	commands = append(commands, command{"check", "validate entries and store invariants", runCheck})
+	commands = append(commands, command{
+		name: "check",
+		desc: "validate entries and store invariants",
+		help: checkHelp,
+		run:  runCheck,
+	})
 }
 
 // entryLoad is the result of loading one entry by its directory name: the
