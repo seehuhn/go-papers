@@ -25,6 +25,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"seehuhn.de/go/paper/internal/bibtex"
@@ -108,6 +109,7 @@ func runSearch(args []string) error {
 		return fmt.Errorf("search: %w", err)
 	}
 
+	start := time.Now()
 	hits, err := s.Search(terms)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
@@ -123,6 +125,21 @@ func runSearch(args []string) error {
 		}
 		filtered = append(filtered, h)
 	}
+
+	// Zero-hit searches are the interesting signal in the event log -
+	// they show which papers agents look for and the store lacks - so
+	// they get their own outcome instead of a bare hits count.
+	outcome := "ok"
+	if len(filtered) == 0 {
+		outcome = "no-hits"
+	}
+	s.LogEvent(store.Event{
+		Command:  "search",
+		Ref:      strings.Join(terms, " "),
+		Outcome:  outcome,
+		Hits:     len(filtered),
+		Duration: time.Since(start).Milliseconds(),
+	})
 
 	if *jsonFlag {
 		return printSearchJSON(filtered)

@@ -35,12 +35,13 @@ const eventUnknownHost = "unknown"
 // Event is one line in the store's local event log.
 type Event struct {
 	When     string `json:"when"`            // 2006-01-02T15:04:05
-	Command  string `json:"command"`         // "fetch" | "ingest" | "check"
+	Command  string `json:"command"`         // "fetch" | "ingest" | "check" | "search"
 	Input    string `json:"input,omitzero"`  // "doi" | "arxiv" | "text" | "file"
-	Ref      string `json:"ref,omitzero"`    // the reference or file basename
-	Outcome  string `json:"outcome"`         // "ok" | "no-oa-route" | "ambiguous" | "duplicate" | "unidentified" | "mismatch" | "error"
+	Ref      string `json:"ref,omitzero"`    // the reference, file basename, or search terms
+	Outcome  string `json:"outcome"`         // "ok" | "no-hits" | "no-oa-route" | "ambiguous" | "duplicate" | "unidentified" | "mismatch" | "error"
 	Source   string `json:"source,omitzero"` // resolving source: "crossref" | "arxiv" | "unpaywall" | ...
 	Tier     int    `json:"tier,omitzero"`   // ingest identification tier 1-3
+	Hits     int    `json:"hits,omitzero"`   // search result count (outcome "no-hits" marks zero)
 	Duration int64  `json:"duration_ms,omitzero"`
 }
 
