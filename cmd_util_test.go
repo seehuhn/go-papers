@@ -17,6 +17,7 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,4 +118,17 @@ func TestOpenStoreReportsAnUninitialisedStoreDirectory(t *testing.T) {
 		t.Errorf("error %q should point at `paper init`", err)
 	}
 	_ = filepath.Join
+}
+
+func TestEventDetail(t *testing.T) {
+	if got := eventDetail(nil); got != "" {
+		t.Errorf("nil error: got %q", got)
+	}
+	if got := eventDetail(errors.New("first line\nsecond line")); got != "first line" {
+		t.Errorf("multi-line: got %q", got)
+	}
+	long := strings.Repeat("x", eventDetailMax+50)
+	if got := eventDetail(errors.New(long)); len([]rune(got)) != eventDetailMax || !strings.HasSuffix(got, "…") {
+		t.Errorf("long message: got %d runes, suffix %q", len([]rune(got)), got[len(got)-3:])
+	}
 }

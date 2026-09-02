@@ -310,6 +310,7 @@ func (in *ingester) ingestInto(key string, files []ingestFile, failures []ingest
 		Ref:     filepath.Base(f.path),
 		Tier:    tier,
 		Outcome: eventOutcome(err),
+		Detail:  eventDetail(err),
 	})
 	return err
 }
@@ -409,6 +410,7 @@ func (in *ingester) ingestBatch(files []ingestFile, statFailures []ingestFailure
 			Input:   "file",
 			Ref:     filepath.Base(f.path),
 			Outcome: eventOutcome(f.err),
+			Detail:  eventDetail(f.err),
 		})
 	}
 	for _, f := range files {
@@ -419,6 +421,7 @@ func (in *ingester) ingestBatch(files []ingestFile, statFailures []ingestFailure
 			Ref:     filepath.Base(f.path),
 			Tier:    tier,
 			Outcome: eventOutcome(err),
+			Detail:  eventDetail(err),
 		})
 		if err != nil {
 			failures = append(failures, ingestFailure{path: f.path, err: err})

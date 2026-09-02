@@ -99,16 +99,23 @@ func runCheck(args []string) (err error) {
 		return fmt.Errorf("check: %w", err)
 	}
 
-	if *online {
-		start := time.Now()
-		defer func() {
-			s.LogEvent(store.Event{
-				Command:  "check",
-				Outcome:  eventOutcome(err),
-				Duration: time.Since(start).Milliseconds(),
-			})
-		}()
-	}
+	// Every run is logged, with the keys it was given (empty for a
+	// whole-store run) so that a later reader can tell which entries were
+	// validated; Source records the online Crossref check when it ran.
+	start := time.Now()
+	defer func() {
+		ev := store.Event{
+			Command:  "check",
+			Ref:      strings.Join(fs.Args(), " "),
+			Outcome:  eventOutcome(err),
+			Detail:   eventDetail(err),
+			Duration: time.Since(start).Milliseconds(),
+		}
+		if *online {
+			ev.Source = "crossref"
+		}
+		s.LogEvent(ev)
+	}()
 
 	keys := fs.Args()
 	wholeStore := len(keys) == 0

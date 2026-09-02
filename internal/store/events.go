@@ -43,6 +43,7 @@ type Event struct {
 	Tier     int    `json:"tier,omitzero"`   // ingest identification tier 1-3
 	Hits     int    `json:"hits,omitzero"`   // search result count (outcome "no-hits" marks zero)
 	Duration int64  `json:"duration_ms,omitzero"`
+	Detail   string `json:"detail,omitzero"` // first line of the error, for outcomes other than "ok"
 }
 
 // LogEvent appends e as one JSON line to events/<hostname>.jsonl under the

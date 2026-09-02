@@ -55,6 +55,30 @@ func TestCheckCleanStore(t *testing.T) {
 	}
 }
 
+// TestCheckLogsEvent covers the event log: every check run is logged,
+// not only an -online one, and the event names the keys that were given
+// so that a reader can tell which entries were validated.
+func TestCheckLogsEvent(t *testing.T) {
+	s, dir := fixtureStore(t)
+	s.Save(cleanPaper("hoeffding_1963"))
+	if err := runCheck([]string{"hoeffding_1963"}); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "events", "*.jsonl"))
+	if len(files) != 1 {
+		t.Fatalf("want one events file, got %v", files)
+	}
+	data, _ := os.ReadFile(files[0])
+	for _, want := range []string{`"command":"check"`, `"ref":"hoeffding_1963"`, `"outcome":"ok"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("event should contain %s, got:\n%s", want, data)
+		}
+	}
+	if strings.Contains(string(data), `"detail"`) {
+		t.Errorf("a successful check must not carry a detail, got:\n%s", data)
+	}
+}
+
 func TestCheckFindsKeyMismatch(t *testing.T) {
 	s, dir := fixtureStore(t)
 	p := cleanPaper("hoeffding_1963")

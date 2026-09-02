@@ -160,6 +160,7 @@ func runFetch(args []string) (err error) {
 				Input:    refKindInput(ref.Kind),
 				Ref:      strings.TrimSpace(refStr),
 				Outcome:  eventOutcome(err),
+				Detail:   eventDetail(err),
 				Source:   refKindSource(ref.Kind),
 				Duration: time.Since(start).Milliseconds(),
 			})

@@ -675,6 +675,9 @@ func TestFetchLogsEvent(t *testing.T) {
 	if !strings.Contains(string(data), `"outcome":"duplicate"`) {
 		t.Errorf("events file should record the duplicate outcome:\n%s", data)
 	}
+	if !strings.Contains(string(data), `"detail":"`) {
+		t.Errorf("a failed fetch should record its reason as detail:\n%s", data)
+	}
 }
 
 // TestFetchPDFURLCreatesEntry covers the case the store exists for: a book

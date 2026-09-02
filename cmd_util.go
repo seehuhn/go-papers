@@ -130,6 +130,26 @@ func eventOutcome(err error) string {
 	return "error"
 }
 
+// eventDetailMax bounds the length of Event.Detail, so that a fetch error
+// carrying a whole resolved record does not bloat the event log.
+const eventDetailMax = 200
+
+// eventDetail returns the first line of err's message, truncated to
+// eventDetailMax runes, for Event.Detail; "" for a nil error. It exists so
+// that a failed command leaves its reason in the event log and not only
+// on the terminal.
+func eventDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg, _, _ := strings.Cut(err.Error(), "\n")
+	msg = strings.TrimSpace(msg)
+	if r := []rune(msg); len(r) > eventDetailMax {
+		msg = string(r[:eventDetailMax-1]) + "…"
+	}
+	return msg
+}
+
 // mergePublished overlays the published Crossref record named by an arXiv
 // preprint onto the preprint's draft entry: the published metadata is the
 // entry, per the spec's best-version rule. A Crossref failure is not
