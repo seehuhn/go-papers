@@ -200,8 +200,8 @@ func (in *ingester) crossref() *sources.Crossref {
 	return &sources.Crossref{BaseURL: crossrefBase, Client: in.api, Email: in.email}
 }
 
-// ingestFile is one candidate file, with the modification time that
-// -since filters on and that the survivor listing reports.
+// ingestFile is one candidate file, with the modification time that the
+// -into survivor listing and the pickup's candidate scan report.
 type ingestFile struct {
 	path    string
 	modTime time.Time
@@ -605,16 +605,22 @@ func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) 
 			key := m.keys[0]
 			f := ingestFile{path: m.candidate.path, modTime: m.candidate.modTime, source: ingestSource}
 			err := in.attach(byKey[key].paper, key, f, m.doc, m.id)
-			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: eventOutcome(err)})
 			if err != nil {
-				fmt.Fprintf(&b, "unidentified: %s: %s; if it is one of the entries below, "+
-					"record it by hand (see paper help schema)\n", m.candidate.path, err)
+				// Verification already succeeded here; this is the move
+				// itself failing (permissions, a full disk, ...), not a
+				// question of what the file is. It gets its own report
+				// line and its own event outcome rather than borrowing
+				// "unidentified", which would misdescribe a file that was
+				// in fact identified.
+				fmt.Fprintf(&b, "failed: %s -> %s: %s\n", m.candidate.path, key, err)
 				unresolved = true
+				in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "error"})
 				continue
 			}
 			fmt.Fprintf(&b, "moved %s -> %s\n", m.candidate.path, key)
 			movedCount++
 			resolved[key] = true
+			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "ok"})
 		}
 	}
 

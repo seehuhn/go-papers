@@ -689,6 +689,43 @@ func TestPickupAmbiguousTwoFiles(t *testing.T) {
 	}
 }
 
+// TestPickupAttachFailureReportsFailed pins that a uniquely matched
+// candidate whose move fails after verification succeeds is reported as
+// "failed: ", not "unidentified: " (the file was identified fine; only
+// the move itself did not work). The destination file is pre-created so
+// that store.Attach's own "already exists" check fails the move: a
+// portable way to force this without relying on filesystem permissions.
+func TestPickupAttachFailureReportsFailed(t *testing.T) {
+	pickupTitleBases(t)
+	root, dl, _, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	if err := os.WriteFile(filepath.Join(root, "smith_2020", "published.pdf"), []byte("already here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pdf := filepath.Join(dl, "download.pdf")
+	makeIngestPDF(t, pdf, "A study of widgets", "")
+	now := time.Now()
+	if err := os.Chtimes(pdf, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err == nil {
+		t.Fatal("expected an error: the move itself must fail")
+	}
+	if !strings.Contains(out, "failed: "+pdf+" -> smith_2020") {
+		t.Fatalf("report: %s", out)
+	}
+	if strings.Contains(out, "unidentified: "+pdf) {
+		t.Errorf("an identified file whose move failed must not be reported as unidentified: %s", out)
+	}
+	if _, statErr := os.Stat(pdf); statErr != nil {
+		t.Error("file must be left in place when the move fails")
+	}
+}
+
 func TestPickupUnidentified(t *testing.T) {
 	guardBases(t)
 	root, dl, _, _ := pickupFixture(t)
