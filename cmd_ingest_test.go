@@ -66,6 +66,22 @@ func guardBases(t *testing.T) {
 	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL, confirmingHandleServer(t))
 }
 
+// pickupTitleBases points crossref at a stub that reports no hits, and
+// every other service at a server that fails the test if contacted. A PDF
+// with a title but no DOI or arXiv stamp always reaches tier 3, which
+// falls back to the Info dictionary's title and asks crossref about it
+// even when there is no page text to search from (see pdfid's tier3); a
+// pickup test that matches candidates by title alone, rather than by DOI,
+// needs crossref to answer rather than to refuse.
+func pickupTitleBases(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work-list","message":{"items":[]}}`)
+	}))
+	t.Cleanup(srv.Close)
+	overrideBases(t, srv.URL, "", "", "", "", "")
+}
+
 // assertUntouched checks that an entry gained nothing from a run that was
 // supposed to refuse the file: holdings unchanged, no version recorded.
 func assertUntouched(t *testing.T, s *store.Store, key string) {
@@ -79,46 +95,6 @@ func assertUntouched(t *testing.T, s *store.Store, key string) {
 	}
 	if len(p.Versions) != 0 {
 		t.Errorf("versions = %v, want the entry left untouched", p.Versions)
-	}
-}
-
-func TestIngestSinceAndInto(t *testing.T) {
-	storeDir := fetchFixtureStore(t)
-	guardBases(t)
-	s := openConfiguredStore(t)
-	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
-		DOI: "10.1080/01621459.1963.10500830",
-		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
-			"author":  "Hoeffding, Wassily",
-			"title":   "Probability inequalities for sums of bounded random variables",
-			"journal": "JASA", "year": "1963"}}})
-	dir := t.TempDir()
-	oldFile := filepath.Join(dir, "old.pdf")
-	newFile := filepath.Join(dir, "new.pdf")
-	makeIngestPDF(t, oldFile, "Something Unrelated", "10.9999/other")
-	makeIngestPDF(t, newFile, "Probability inequalities", "10.1080/01621459.1963.10500830")
-	past := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(oldFile, past, past); err != nil {
-		t.Fatal(err)
-	}
-	cutoff := time.Now().Add(-time.Hour).Format(time.RFC3339)
-
-	err := runIngest([]string{"-since", cutoff, "-into", "hoeffding_1963", oldFile, newFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(storeDir, "hoeffding_1963", "published.pdf")); err != nil {
-		t.Error("surviving file should be attached as published.pdf")
-	}
-	if _, err := os.Stat(newFile); !errors.Is(err, os.ErrNotExist) {
-		t.Error("attached file must be moved, not copied")
-	}
-	if _, err := os.Stat(oldFile); err != nil {
-		t.Error("filtered-out file must be left in place")
-	}
-	p, _ := s.Load("hoeffding_1963")
-	if p.Holdings != "published" {
-		t.Errorf("holdings = %q", p.Holdings)
 	}
 }
 
@@ -529,5 +505,255 @@ func TestIngestIntoPreprintDiscoversArxiv(t *testing.T) {
 	}
 	if p.Arxiv == nil || p.Arxiv.ID != "2412.05039" || p.Arxiv.Version != 2 {
 		t.Errorf("arxiv = %+v, want the identity the file disclosed", p.Arxiv)
+	}
+}
+
+// pickupFixture prepares a fixture store, points $HOME at a fresh temp
+// directory with empty Desktop/ and Downloads/ subdirectories (so
+// pickupDirs finds them without touching the real user's directories),
+// and changes into a fresh workspace directory (the third directory the
+// pickup scans). It returns the store root and the three directories.
+func pickupFixture(t *testing.T) (root, downloads, desktop, work string) {
+	t.Helper()
+	root = fetchFixtureStore(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	downloads = filepath.Join(home, "Downloads")
+	desktop = filepath.Join(home, "Desktop")
+	if err := os.MkdirAll(downloads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(desktop, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work = t.TempDir()
+	t.Chdir(work)
+	return root, downloads, desktop, work
+}
+
+// writeAwaiting saves a holdings-"none" entry directly into the store at
+// root, with a single log line recording its creation time. key must be
+// of the form "surname_year", which the existing store keys already use;
+// the surname and year are read back out of it for the entry's bibtex, so
+// that the "still awaiting" report line has something to show.
+func writeAwaiting(t *testing.T, root, key, title, when string) {
+	t.Helper()
+	s, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surname, year, _ := strings.Cut(key, "_")
+	if surname != "" {
+		surname = strings.ToUpper(surname[:1]) + surname[1:]
+	}
+	p := &store.Paper{
+		Key:      key,
+		Status:   "draft",
+		Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": surname + ", Test",
+			"title":  title,
+			"year":   year,
+		}},
+		Log: []store.LogEntry{{When: when, Action: "created", Detail: "created for test"}},
+	}
+	if err := s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// loadEntry loads the entry at key from the store at root, failing the
+// test if either the store or the entry cannot be opened.
+func loadEntry(t *testing.T, root, key string) *store.Paper {
+	t.Helper()
+	s, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Load(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestPickupMovesUniqueMatch(t *testing.T) {
+	pickupTitleBases(t)
+	root, dl, _, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	pdf := filepath.Join(dl, "download.pdf")
+	makeIngestPDF(t, pdf, "A study of widgets", "")
+	now := time.Now()
+	if err := os.Chtimes(pdf, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := runIngest(nil); err != nil {
+			t.Fatalf("pickup: %v", err)
+		}
+	})
+	if !strings.Contains(out, "moved "+pdf+" -> smith_2020") {
+		t.Fatalf("report: %s", out)
+	}
+	if _, err := os.Stat(pdf); !os.IsNotExist(err) {
+		t.Fatalf("file not moved")
+	}
+	p := loadEntry(t, root, "smith_2020")
+	if p.Holdings == "none" {
+		t.Fatalf("holdings not updated")
+	}
+}
+
+func TestPickupIgnoresOldFiles(t *testing.T) {
+	pickupTitleBases(t)
+	root, dl, _, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	pdf := filepath.Join(dl, "old.pdf")
+	makeIngestPDF(t, pdf, "A study of widgets", "")
+	old := time.Date(2026, 8, 1, 0, 0, 0, 0, time.Local)
+	if err := os.Chtimes(pdf, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err == nil {
+		t.Fatal("expected an error: nothing was moved")
+	}
+	if !strings.Contains(out, "still awaiting:") || !strings.Contains(out, "smith_2020") {
+		t.Fatalf("report: %s", out)
+	}
+	if _, statErr := os.Stat(pdf); statErr != nil {
+		t.Error("file older than every awaiting entry must be left in place")
+	}
+}
+
+func TestPickupAmbiguousTwoEntries(t *testing.T) {
+	pickupTitleBases(t)
+	root, dl, _, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A shared title", "2026-09-01T10:00:00")
+	writeAwaiting(t, root, "jones_2021", "A shared title", "2026-09-01T10:00:00")
+	pdf := filepath.Join(dl, "download.pdf")
+	makeIngestPDF(t, pdf, "A shared title", "")
+	now := time.Now()
+	if err := os.Chtimes(pdf, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err == nil {
+		t.Fatal("expected an error: the file matches two entries")
+	}
+	if !strings.Contains(out, "ambiguous: ") || !strings.Contains(out, "smith_2020") || !strings.Contains(out, "jones_2021") {
+		t.Fatalf("report: %s", out)
+	}
+	if _, statErr := os.Stat(pdf); statErr != nil {
+		t.Error("ambiguous file must be left in place")
+	}
+}
+
+func TestPickupAmbiguousTwoFiles(t *testing.T) {
+	pickupTitleBases(t)
+	root, dl, desktop, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	a := filepath.Join(dl, "a.pdf")
+	b := filepath.Join(desktop, "b.pdf")
+	makeIngestPDF(t, a, "A study of widgets", "")
+	makeIngestPDF(t, b, "A study of widgets", "")
+	now := time.Now()
+	if err := os.Chtimes(a, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(b, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err == nil {
+		t.Fatal("expected an error: the entry is matched by two files")
+	}
+	if !strings.Contains(out, "ambiguous: smith_2020 matched by") {
+		t.Fatalf("report: %s", out)
+	}
+	for _, p := range []string{a, b} {
+		if _, statErr := os.Stat(p); statErr != nil {
+			t.Errorf("%s must be left in place", p)
+		}
+	}
+}
+
+func TestPickupUnidentified(t *testing.T) {
+	guardBases(t)
+	root, dl, _, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	bad := filepath.Join(dl, "x.pdf")
+	if err := os.WriteFile(bad, []byte("this is not a pdf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(bad, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err == nil {
+		t.Fatal("expected an error: the file cannot be identified")
+	}
+	if !strings.Contains(out, "unidentified: ") || !strings.Contains(out, "record it by hand") {
+		t.Fatalf("report: %s", out)
+	}
+	if _, statErr := os.Stat(bad); statErr != nil {
+		t.Error("unidentified file must be left in place")
+	}
+}
+
+func TestPickupNothingAwaiting(t *testing.T) {
+	guardBases(t)
+	pickupFixture(t)
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err != nil {
+		t.Fatalf("pickup: %v", err)
+	}
+	if !strings.Contains(out, "no entry is awaiting a file") {
+		t.Fatalf("report: %s", out)
+	}
+}
+
+func TestPickupScansWorkspace(t *testing.T) {
+	pickupTitleBases(t)
+	root, _, _, work := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	pdf := filepath.Join(work, "download.pdf")
+	makeIngestPDF(t, pdf, "A study of widgets", "")
+	now := time.Now()
+	if err := os.Chtimes(pdf, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runIngest(nil) })
+	if err != nil {
+		t.Fatalf("pickup: %v", err)
+	}
+	if !strings.Contains(out, "moved "+pdf+" -> smith_2020") {
+		t.Fatalf("report: %s", out)
+	}
+}
+
+func TestIngestRejectsFlagsWithoutFiles(t *testing.T) {
+	if err := runIngest([]string{"-into", "smith_2020"}); err == nil {
+		t.Fatal("expected usage error")
 	}
 }

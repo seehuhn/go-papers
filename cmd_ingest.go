@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,12 +44,21 @@ still behind a URL, use "paper fetch <url>" instead.
 Without flags, each file is identified from its own contents, resolved
 online, and given a fresh draft entry.
 
--into attaches to an existing entry and is all-or-nothing: after the
--since filter, exactly one file must survive, and a file that cannot
-be read blocks the run just as a second survivor would. With zero or
-several survivors the command fails and lists what it found. The
-surviving file is verified against the entry by title before it is
-moved, so the wrong PDF is refused rather than filed.
+With no file arguments, "paper ingest" picks up downloads the user was
+asked for: it scans ~/Desktop, ~/Downloads and the current directory for
+PDFs newer than the oldest entry that has no file yet, verifies each
+against those entries by title, and moves every unambiguous match into
+the store. Files that match nothing are left alone. A file that cannot
+be identified from its own contents, or that matches several entries,
+is reported and left where it is; the command exits nonzero whenever
+anything was left unresolved or nothing was moved.
+
+-into attaches to an existing entry and is all-or-nothing: exactly one
+given file must survive stat'ing, and a file that cannot be read blocks
+the run just as a second survivor would. With zero or several survivors
+the command fails and lists what it found. The surviving file is
+verified against the entry by title before it is moved, so the wrong
+PDF is refused rather than filed.
 
 In bash, glob patterns such as ~/Downloads/*.pdf need
 "shopt -s nullglob" first: without it an unmatched pattern is passed
@@ -62,8 +72,6 @@ options:
     -arxiv <id>    skip identification: the file is this arXiv e-print
     -doi <doi>     skip identification: the file is the paper with this DOI
     -into <key>    attach the single surviving file to this existing entry
-    -since <time>  ignore files last modified before this time
-                   (RFC3339, or 2006-01-02T15:04:05 in local time)
     -store <dir>   path to the paper store (overrides the configured store)
 `
 
@@ -91,25 +99,25 @@ const ingestTitleMinScore = 0.8
 // from the local filesystem rather than downloading.
 const ingestSource = "ingest"
 
-// sinceFormats are the timestamp layouts -since accepts: RFC3339, and a
-// local-time form without zone for convenience.
-var sinceFormats = []string{time.RFC3339, "2006-01-02T15:04:05"}
-
 // runIngest implements the "paper ingest" command: it takes PDF files that
 // are already on disk, works out which paper each one is, and moves it
 // into the store.
 //
-// The file arguments are always explicit. What happens to them depends on
-// the flags: -into attaches the single surviving file to an existing entry
-// after verifying that it really is that paper; -doi or -arxiv name the
-// paper outright and skip identification; otherwise each file is
+// With no file arguments and none of -into/-doi/-arxiv, it runs the
+// pickup instead (see (*ingester).pickup): it hunts ~/Desktop,
+// ~/Downloads and the working directory for files the user was asked to
+// download, rather than requiring them to be named explicitly.
+//
+// Otherwise the file arguments are explicit. What happens to them depends
+// on the flags: -into attaches the single surviving file to an existing
+// entry after verifying that it really is that paper; -doi or -arxiv name
+// the paper outright and skip identification; otherwise each file is
 // identified on its own, resolved online, and given a fresh draft entry.
 //
 // Nothing is ever downloaded: we already hold the file, so the online
 // services are consulted for metadata only.
 func runIngest(args []string) error {
 	fs, storeFlag := newFlagSet("ingest")
-	since := fs.String("since", "", "ignore files last modified before this time (RFC3339, or 2006-01-02T15:04:05 in local time)")
 	into := fs.String("into", "", "attach the single surviving file to this existing entry")
 	doiFlag := fs.String("doi", "", "skip identification: the file is the paper with this DOI")
 	arxivFlag := fs.String("arxiv", "", "skip identification: the file is this arXiv e-print")
@@ -121,8 +129,26 @@ func runIngest(args []string) error {
 	}
 
 	if fs.NArg() == 0 {
-		return fmt.Errorf("ingest: specify at least one PDF file to ingest")
+		if *into != "" || *doiFlag != "" || *arxivFlag != "" {
+			return fmt.Errorf("ingest: -into, -doi and -arxiv name what a file is, but no file was given; " +
+				"omit them to run the pickup instead")
+		}
+		s, cfg, err := openStore(*storeFlag)
+		if err != nil {
+			return fmt.Errorf("ingest: %w", err)
+		}
+		in := &ingester{
+			store: s,
+			email: cfg.Email,
+			api:   &http.Client{Timeout: apiTimeout},
+			now:   time.Now(),
+		}
+		if err := in.pickup(pickupDirs()); err != nil {
+			return fmt.Errorf("ingest: %w", err)
+		}
+		return nil
 	}
+
 	override := *doiFlag != "" || *arxivFlag != ""
 	if *doiFlag != "" && *arxivFlag != "" {
 		return fmt.Errorf("ingest: -doi and -arxiv name the same file twice; use one of them")
@@ -134,10 +160,7 @@ func runIngest(args []string) error {
 		return fmt.Errorf("ingest: -doi and -arxiv say what one file is, but %d files were given", fs.NArg())
 	}
 
-	files, failures, err := ingestFiles(fs.Args(), *since)
-	if err != nil {
-		return fmt.Errorf("ingest: %w", err)
-	}
+	files, failures := ingestFiles(fs.Args())
 
 	s, cfg, err := openStore(*storeFlag)
 	if err != nil {
@@ -153,10 +176,6 @@ func runIngest(args []string) error {
 	switch {
 	case *into != "":
 		err = in.ingestInto(*into, files, failures)
-	case len(files) == 0 && len(failures) == 0:
-		// Every file was filtered out by -since, which ingestFiles has
-		// already reported. There is nothing left to do, and nothing failed.
-		return nil
 	default:
 		err = in.ingestBatch(files, failures, *doiFlag, *arxivFlag)
 	}
@@ -231,27 +250,12 @@ func (f ingestFile) origin() string {
 	return "identified in " + f.path
 }
 
-// ingestFiles stats the named files and drops the ones last modified
-// before the -since cutoff. A dropped file is reported on stdout: it is a
-// deliberate part of the run, not a failure. An empty since keeps every
-// file.
-//
-// A path that cannot be stat'ed (dangling symlink, permissions, an
-// unmaterialized cloud placeholder) or that names a directory is not an
-// abort: it comes back as a per-file failure, leaving the caller free to
-// carry on with everything else that did stat cleanly. The returned error
-// is reserved for a malformed -since argument, which is a usage mistake
-// rather than a property of any one file.
-func ingestFiles(paths []string, since string) ([]ingestFile, []ingestFailure, error) {
-	var cutoff time.Time
-	if since != "" {
-		var err error
-		cutoff, err = parseSince(since)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
+// ingestFiles stats the named files. A path that cannot be stat'ed
+// (dangling symlink, permissions, an unmaterialized cloud placeholder) or
+// that names a directory is not an abort: it comes back as a per-file
+// failure, leaving the caller free to carry on with everything else that
+// did stat cleanly.
+func ingestFiles(paths []string) ([]ingestFile, []ingestFailure) {
 	files := make([]ingestFile, 0, len(paths))
 	var failures []ingestFailure
 	for _, path := range paths {
@@ -267,26 +271,9 @@ func ingestFiles(paths []string, since string) ([]ingestFile, []ingestFailure, e
 			})
 			continue
 		}
-		if since != "" && fi.ModTime().Before(cutoff) {
-			fmt.Printf("skipping %s: last modified %s, before %s\n",
-				path, fi.ModTime().Format(time.RFC3339), cutoff.Format(time.RFC3339))
-			continue
-		}
 		files = append(files, ingestFile{path: path, modTime: fi.ModTime(), source: ingestSource})
 	}
-	return files, failures, nil
-}
-
-// parseSince parses a -since timestamp in any of the accepted layouts. A
-// layout without a zone is read as local time, which is what a human
-// typing "yesterday afternoon" means.
-func parseSince(s string) (time.Time, error) {
-	for _, layout := range sinceFormats {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("cannot parse -since %q: use 2006-01-02T15:04:05 or an RFC3339 timestamp", s)
+	return files, failures
 }
 
 // ingestInto implements behavior branch 2: attach one file to an entry
@@ -329,15 +316,27 @@ func (in *ingester) ingestIntoOne(key string, f ingestFile) (int, error) {
 		return 0, err
 	}
 
-	filename, ok := verifyInto(p, doc, id)
-	if !ok {
-		return id.Tier, intoMismatchError(p, f, doc, id)
-	}
-	if _, err := attachFile(in.store, p, f.path, filename, f.source, in.now); err != nil {
+	if err := in.attach(p, key, f, doc, id); err != nil {
 		return id.Tier, err
 	}
 	fmt.Printf("ingested %s -> %s\n", f.displayName(), p.Key)
 	return id.Tier, nil
+}
+
+// attach is the shared tail of ingestion once a file has been identified:
+// it verifies that f really is the paper the entry at key describes, and,
+// if so, moves it into the store and records its provenance. It is used
+// both by -into ingestion and by the pickup, so the verify-then-move logic
+// is written once. A file that does not verify is left in place, reported
+// by intoMismatchError; the caller decides what to print on success.
+func (in *ingester) attach(p *store.Paper, key string, f ingestFile, doc *pdfid.DocText, id pdfid.ID) error {
+	p.Key = key
+	filename, ok := verifyInto(p, doc, id)
+	if !ok {
+		return intoMismatchError(p, f, doc, id)
+	}
+	_, err := attachFile(in.store, p, f.path, filename, f.source, in.now)
+	return err
 }
 
 // verifyInto checks a file against the entry it is to be attached to and,
@@ -391,6 +390,316 @@ func pdfTitle(doc *pdfid.DocText, id pdfid.ID) string {
 		return doc.Title
 	}
 	return ""
+}
+
+// pickupTimeLayout is the layout a paper.json log entry's When field uses
+// (see store.LogEntry and store.Paper.AppendLog).
+const pickupTimeLayout = "2006-01-02T15:04:05"
+
+// pickupDirs returns the directories the pickup scans: the user's Desktop
+// and Downloads, and the current working directory (the caller's
+// workspace). A directory that cannot be resolved is left out rather than
+// failing the run; scanPDFs skips a directory that does not exist anyway.
+func pickupDirs() []string {
+	var dirs []string
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, "Desktop"), filepath.Join(home, "Downloads"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		dirs = append(dirs, cwd)
+	}
+	return dirs
+}
+
+// pickupEntry is one store entry awaiting a file: holdings "none". created
+// is read from the entry's first log line; it is the zero time, with
+// createdUnknown set, when the log is empty or the line does not parse -
+// such an entry can be matched against any candidate, however old.
+type pickupEntry struct {
+	key            string
+	paper          *store.Paper
+	created        time.Time
+	createdUnknown bool
+}
+
+// awaitingEntries returns every store entry with holdings "none", the
+// entries the pickup tries to fill.
+func (in *ingester) awaitingEntries() ([]pickupEntry, error) {
+	papers, err := in.store.LoadAll()
+	if err != nil {
+		return nil, err
+	}
+	var out []pickupEntry
+	for _, p := range papers {
+		if p.Holdings != "none" {
+			continue
+		}
+		created, unknown := entryCreated(p)
+		out = append(out, pickupEntry{key: p.Key, paper: p, created: created, createdUnknown: unknown})
+	}
+	return out, nil
+}
+
+// entryCreated reads an entry's creation time off its first log line. An
+// empty log or an unparsable When is reported back as unknown rather than
+// failing the run: the entry is simply treated as always eligible.
+func entryCreated(p *store.Paper) (created time.Time, unknown bool) {
+	if len(p.Log) == 0 {
+		return time.Time{}, true
+	}
+	t, err := time.ParseInLocation(pickupTimeLayout, p.Log[0].When, time.Local)
+	if err != nil {
+		return time.Time{}, true
+	}
+	return t, false
+}
+
+// pickupCandidate is one PDF found while scanning for downloads.
+type pickupCandidate struct {
+	path    string
+	modTime time.Time
+}
+
+// scanPDFs lists every regular file ending in ".pdf" (case-insensitive)
+// directly inside dirs, whose modification time is not before oldest. A
+// directory that cannot be read (does not exist, or any other error) is
+// skipped silently: the pickup runs the same whether or not ~/Desktop
+// happens to exist. Candidates are returned sorted by path, and
+// deduplicated by absolute path in case two of dirs coincide.
+func scanPDFs(dirs []string, oldest time.Time) []pickupCandidate {
+	var out []pickupCandidate
+	seen := make(map[string]bool)
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				abs = path
+			}
+			if seen[abs] {
+				continue
+			}
+			seen[abs] = true
+			if info.ModTime().Before(oldest) {
+				continue
+			}
+			out = append(out, pickupCandidate{path: path, modTime: info.ModTime()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
+	return out
+}
+
+// pickupMatch is the outcome of identifying one candidate: which awaiting
+// entries it verified against (sorted by key), or, when identification
+// itself failed, why.
+type pickupMatch struct {
+	candidate    pickupCandidate
+	doc          *pdfid.DocText
+	id           pdfid.ID
+	keys         []string
+	unidentified bool
+	reason       string
+}
+
+// matchCandidates identifies each candidate and checks it against every
+// awaiting entry whose creation time is not after the candidate's modtime,
+// using the same verifyInto check -into uses.
+func (in *ingester) matchCandidates(cands []pickupCandidate, awaiting []pickupEntry) []pickupMatch {
+	matches := make([]pickupMatch, 0, len(cands))
+	for _, c := range cands {
+		doc, id, err := in.identify(c.path)
+		title := pdfTitle(doc, id)
+		if err != nil {
+			matches = append(matches, pickupMatch{candidate: c, unidentified: true, reason: err.Error()})
+			continue
+		}
+		if title == "" && id.DOI == "" && id.ArxivID == "" {
+			matches = append(matches, pickupMatch{
+				candidate: c, unidentified: true,
+				reason: "no DOI, no arXiv stamp, and no title could be read from it",
+			})
+			continue
+		}
+
+		var keys []string
+		for _, a := range awaiting {
+			if a.created.After(c.modTime) {
+				continue
+			}
+			if _, ok := verifyInto(a.paper, doc, id); ok {
+				keys = append(keys, a.key)
+			}
+		}
+		sort.Strings(keys)
+		matches = append(matches, pickupMatch{candidate: c, doc: doc, id: id, keys: keys})
+	}
+	return matches
+}
+
+// pickupReport is the outcome of applyMatches: the printable report and
+// whether the run counts as a success (behaviour 10: at least one file
+// moved, nothing left ambiguous or unidentified).
+type pickupReport struct {
+	text string
+	ok   bool
+}
+
+// applyMatches decides what to do with each match, attaches the safe
+// ones, and builds the report. A candidate is safe to attach when it
+// verifies against exactly one awaiting entry and that entry verifies
+// against no other candidate; everything else is reported and left in
+// place. One event per candidate is logged along the way.
+func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) pickupReport {
+	byKey := make(map[string]*pickupEntry, len(awaiting))
+	suitors := make(map[string][]string) // key -> matching candidate paths
+	for i := range awaiting {
+		byKey[awaiting[i].key] = &awaiting[i]
+	}
+	for _, m := range matches {
+		for _, k := range m.keys {
+			suitors[k] = append(suitors[k], m.candidate.path)
+		}
+	}
+
+	var b strings.Builder
+	resolved := make(map[string]bool)
+	var movedCount int
+	var noMatchCount int
+	var unresolved bool // an ambiguity or a failure that keeps the exit nonzero
+
+	for _, m := range matches {
+		switch {
+		case m.unidentified:
+			fmt.Fprintf(&b, "unidentified: %s: %s; if it is one of the entries below, "+
+				"record it by hand (see paper help schema)\n", m.candidate.path, m.reason)
+			unresolved = true
+			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "unidentified"})
+
+		case len(m.keys) == 0:
+			noMatchCount++
+			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "no-match"})
+
+		case len(m.keys) > 1:
+			fmt.Fprintf(&b, "ambiguous: %s matches %s\n", m.candidate.path, strings.Join(m.keys, ", "))
+			unresolved = true
+			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "ambiguous"})
+
+		case len(suitors[m.keys[0]]) > 1:
+			// Reported once per key below; still needs its own event.
+			unresolved = true
+			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "ambiguous"})
+
+		default:
+			key := m.keys[0]
+			f := ingestFile{path: m.candidate.path, modTime: m.candidate.modTime, source: ingestSource}
+			err := in.attach(byKey[key].paper, key, f, m.doc, m.id)
+			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: eventOutcome(err)})
+			if err != nil {
+				fmt.Fprintf(&b, "unidentified: %s: %s; if it is one of the entries below, "+
+					"record it by hand (see paper help schema)\n", m.candidate.path, err)
+				unresolved = true
+				continue
+			}
+			fmt.Fprintf(&b, "moved %s -> %s\n", m.candidate.path, key)
+			movedCount++
+			resolved[key] = true
+		}
+	}
+
+	var ambiguousKeys []string
+	for k, paths := range suitors {
+		if len(paths) > 1 {
+			ambiguousKeys = append(ambiguousKeys, k)
+		}
+	}
+	sort.Strings(ambiguousKeys)
+	for _, k := range ambiguousKeys {
+		paths := append([]string(nil), suitors[k]...)
+		sort.Strings(paths)
+		fmt.Fprintf(&b, "ambiguous: %s matched by %s\n", k, strings.Join(paths, ", "))
+	}
+
+	if noMatchCount > 0 {
+		fmt.Fprintf(&b, "%d other PDFs matched no awaiting entry\n", noMatchCount)
+	}
+
+	var still []string
+	for _, a := range awaiting {
+		if resolved[a.key] {
+			continue
+		}
+		who := formatWhoYear(firstAuthorLastName(a.paper), a.paper.Bibtex.Fields["year"])
+		still = append(still, fmt.Sprintf("%s  %s  %s", a.key, who, a.paper.Bibtex.Fields["title"]))
+	}
+	if len(still) == 0 {
+		b.WriteString("nothing left awaiting\n")
+	} else {
+		b.WriteString("still awaiting:\n")
+		for _, line := range still {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+
+	ok := movedCount > 0 && !unresolved && len(ambiguousKeys) == 0
+	return pickupReport{text: b.String(), ok: ok}
+}
+
+// pickup implements "paper ingest" with no arguments: it scans dirs for
+// PDFs the user was asked to download and files the unambiguous ones,
+// following the contract in the design spec (behaviours 1-12 there).
+func (in *ingester) pickup(dirs []string) error {
+	awaiting, err := in.awaitingEntries()
+	if err != nil {
+		return err
+	}
+
+	var notes strings.Builder
+	for _, a := range awaiting {
+		if a.createdUnknown {
+			fmt.Fprintf(&notes, "note: %s has no readable creation time; treating it as always eligible\n", a.key)
+		}
+	}
+
+	if len(awaiting) == 0 {
+		fmt.Print(notes.String())
+		fmt.Println("no entry is awaiting a file")
+		return nil
+	}
+
+	oldest := awaiting[0].created
+	for _, a := range awaiting[1:] {
+		if a.created.Before(oldest) {
+			oldest = a.created
+		}
+	}
+
+	cands := scanPDFs(dirs, oldest)
+	if len(cands) == 0 {
+		in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Outcome: "no-candidates"})
+	}
+
+	matches := in.matchCandidates(cands, awaiting)
+	report := in.applyMatches(awaiting, matches)
+
+	fmt.Print(notes.String())
+	fmt.Print(report.text)
+	if report.ok {
+		return nil
+	}
+	return errors.New(strings.TrimRight(notes.String()+report.text, "\n"))
 }
 
 // ingestBatch implements behavior branch 3: identify, resolve and create
@@ -630,14 +939,10 @@ func duplicateError(what, key string) error {
 }
 
 // intoCountError reports that -into did not get the single file it needs,
-// listing every survivor of the -since filter by name and modification
-// time, and every path that could not even be stat'ed, so that the caller
-// can pick one.
+// listing every given file by name and modification time, and every path
+// that could not even be stat'ed, so that the caller can pick one.
 func intoCountError(key string, files []ingestFile, failures []ingestFailure) error {
 	total := len(files) + len(failures)
-	if total == 0 {
-		return fmt.Errorf("-into %s needs exactly one file, but -since filtered out every one of them", key)
-	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "-into %s needs exactly one file, but %d are left:\n", key, total)
@@ -647,8 +952,7 @@ func intoCountError(key string, files []ingestFile, failures []ingestFailure) er
 	for _, f := range failures {
 		fmt.Fprintf(&b, "  %s: %v\n", f.path, f.err)
 	}
-	b.WriteString("Re-run with only the file that belongs to " + key +
-		", or narrow -since until one file is left.")
+	b.WriteString("Re-run with only the file that belongs to " + key + ".")
 	return errors.New(b.String())
 }
 
