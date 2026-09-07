@@ -753,6 +753,41 @@ func TestPickupUnidentified(t *testing.T) {
 	}
 }
 
+// TestPickupIgnoresCleanHoldingsNone pins that a holdings-none entry
+// whose status is "clean" is not treated as awaiting a file: a clean
+// status means the entry passed "paper check" already, which happens
+// for a deliberate metadata-only ("none" request) entry, not one still
+// waiting on a download.
+func TestPickupIgnoresCleanHoldingsNone(t *testing.T) {
+	guardBases(t)
+	root, _, _, _ := pickupFixture(t)
+
+	s, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &store.Paper{
+		Key:      "smith_2020",
+		Status:   "clean",
+		Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Smith, Test", "title": "A study of widgets", "year": "2020"}},
+		Log: []store.LogEntry{{When: "2026-09-01T10:00:00", Action: "created", Detail: "created for test"}},
+	}
+	if err := s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var runErr error
+	out := captureStdout(t, func() { runErr = runIngest(nil) })
+	if runErr != nil {
+		t.Fatalf("pickup: %v", runErr)
+	}
+	if !strings.Contains(out, "no entry is awaiting a file") {
+		t.Fatalf("report: %s", out)
+	}
+}
+
 func TestPickupNothingAwaiting(t *testing.T) {
 	guardBases(t)
 	pickupFixture(t)

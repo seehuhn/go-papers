@@ -46,7 +46,7 @@ online, and given a fresh draft entry.
 
 With no file arguments, "paper ingest" picks up downloads the user was
 asked for: it scans ~/Desktop, ~/Downloads and the current directory for
-PDFs newer than the oldest entry that has no file yet, verifies each
+PDFs newer than the oldest draft entry that has no file yet, verifies each
 against those entries by title, and moves every unambiguous match into
 the store. Files that match nothing are left alone. A file that cannot
 be identified from its own contents, or that matches several entries,
@@ -422,8 +422,11 @@ type pickupEntry struct {
 	createdUnknown bool
 }
 
-// awaitingEntries returns every store entry with holdings "none", the
-// entries the pickup tries to fill.
+// awaitingEntries returns every store entry with holdings "none" and
+// status "draft", the entries the pickup tries to fill. A holdings-none
+// entry that has passed "paper check" and been promoted to "clean" is a
+// deliberate metadata-only entry, not one awaiting a file, and must not
+// be offered a match.
 func (in *ingester) awaitingEntries() ([]pickupEntry, error) {
 	papers, err := in.store.LoadAll()
 	if err != nil {
@@ -431,7 +434,7 @@ func (in *ingester) awaitingEntries() ([]pickupEntry, error) {
 	}
 	var out []pickupEntry
 	for _, p := range papers {
-		if p.Holdings != "none" {
+		if p.Holdings != "none" || p.Status != "draft" {
 			continue
 		}
 		created, unknown := entryCreated(p)
@@ -548,12 +551,17 @@ func (in *ingester) matchCandidates(cands []pickupCandidate, awaiting []pickupEn
 	return matches
 }
 
-// pickupReport is the outcome of applyMatches: the printable report and
+// pickupReport is the outcome of applyMatches: the printable report,
 // whether the run counts as a success (behaviour 10: at least one file
-// moved, nothing left ambiguous or unidentified).
+// moved, nothing left ambiguous or unidentified), and the counts pickup
+// uses to build a short error when it is not: how many files were moved,
+// and how many candidates were left unresolved (unidentified, ambiguous,
+// or failed to move).
 type pickupReport struct {
-	text string
-	ok   bool
+	text            string
+	ok              bool
+	movedCount      int
+	unresolvedCount int
 }
 
 // applyMatches decides what to do with each match, attaches the safe
@@ -577,7 +585,8 @@ func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) 
 	resolved := make(map[string]bool)
 	var movedCount int
 	var noMatchCount int
-	var unresolved bool // an ambiguity or a failure that keeps the exit nonzero
+	var unresolved bool     // an ambiguity or a failure that keeps the exit nonzero
+	var unresolvedCount int // how many candidates triggered it, for the closing error
 
 	for _, m := range matches {
 		switch {
@@ -585,6 +594,7 @@ func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) 
 			fmt.Fprintf(&b, "unidentified: %s: %s; if it is one of the entries below, "+
 				"record it by hand (see paper help schema)\n", m.candidate.path, m.reason)
 			unresolved = true
+			unresolvedCount++
 			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "unidentified"})
 
 		case len(m.keys) == 0:
@@ -594,11 +604,13 @@ func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) 
 		case len(m.keys) > 1:
 			fmt.Fprintf(&b, "ambiguous: %s matches %s\n", m.candidate.path, strings.Join(m.keys, ", "))
 			unresolved = true
+			unresolvedCount++
 			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "ambiguous"})
 
 		case len(suitors[m.keys[0]]) > 1:
 			// Reported once per key below; still needs its own event.
 			unresolved = true
+			unresolvedCount++
 			in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "ambiguous"})
 
 		default:
@@ -614,6 +626,7 @@ func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) 
 				// in fact identified.
 				fmt.Fprintf(&b, "failed: %s -> %s: %s\n", m.candidate.path, key, err)
 				unresolved = true
+				unresolvedCount++
 				in.store.LogEvent(store.Event{Command: "ingest", Input: "pickup", Ref: m.candidate.path, Outcome: "error"})
 				continue
 			}
@@ -660,7 +673,7 @@ func (in *ingester) applyMatches(awaiting []pickupEntry, matches []pickupMatch) 
 	}
 
 	ok := movedCount > 0 && !unresolved && len(ambiguousKeys) == 0
-	return pickupReport{text: b.String(), ok: ok}
+	return pickupReport{text: b.String(), ok: ok, movedCount: movedCount, unresolvedCount: unresolvedCount}
 }
 
 // pickup implements "paper ingest" with no arguments: it scans dirs for
@@ -705,7 +718,10 @@ func (in *ingester) pickup(dirs []string) error {
 	if report.ok {
 		return nil
 	}
-	return errors.New(strings.TrimRight(notes.String()+report.text, "\n"))
+	if report.movedCount == 0 {
+		return errors.New("pickup moved nothing")
+	}
+	return fmt.Errorf("pickup left %d candidates unresolved", report.unresolvedCount)
 }
 
 // ingestBatch implements behavior branch 3: identify, resolve and create
