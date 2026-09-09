@@ -25,15 +25,18 @@ import (
 
 // Normalize returns the canonical ISBN-13 (13 digits, no hyphens) for s,
 // accepting ISBN-10 or ISBN-13 with or without hyphens/spaces and a
-// leading "ISBN" / "ISBN-13:" label. It returns an error when the digits
-// do not form an ISBN or the checksum fails.
+// leading "ISBN", "ISBN-10:" or "ISBN-13:" label. It returns an error
+// when the digits do not form an ISBN or the checksum fails.
 func Normalize(s string) (string, error) {
-	// Strip leading "ISBN" or "ISBN-13:" label
+	// Strip a leading "ISBN", "ISBN-10:" or "ISBN-13:" label. The
+	// qualified forms come first, so that "ISBN" never matches half of
+	// one and leaves the rest of the label behind.
 	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "ISBN-13:") {
-		s = strings.TrimSpace(s[8:])
-	} else if strings.HasPrefix(s, "ISBN") {
-		s = strings.TrimSpace(s[4:])
+	for _, label := range []string{"ISBN-10:", "ISBN-13:", "ISBN"} {
+		if rest, ok := strings.CutPrefix(s, label); ok {
+			s = strings.TrimSpace(rest)
+			break
+		}
 	}
 
 	// Remove hyphens and spaces, extract digits

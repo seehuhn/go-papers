@@ -29,10 +29,11 @@ func TestNormalize(t *testing.T) {
 		{"0-521-00601-5", "9780521006019", false},
 		{"9780521006019", "9780521006019", false},
 		{"ISBN 978 0 521 00601 9", "9780521006019", false},
+		{"ISBN-10: 0-521-00601-5", "9780521006019", false},
 		{"080442957X", "9780804429573", false},
-		{"9780521006018", "", true},  // checksum
-		{"12345", "", true},          // too short
-		{"", "", true},               // empty
+		{"9780521006018", "", true}, // checksum
+		{"12345", "", true},         // too short
+		{"", "", true},              // empty
 		{"978052100601９", "", true}, // fullwidth digit (U+FF19)
 	}
 	for _, c := range cases {

@@ -979,6 +979,7 @@ func TestOverrideBasesRefusesUnspecifiedServices(t *testing.T) {
 	for name, base := range map[string]string{
 		"arxiv": arxivBase, "unpaywall": unpaywallBase,
 		"zbmath": zbmathBase, "dblp": dblpBase, "handle": handleBase,
+		"openlibrary": openLibraryBase,
 	} {
 		if !strings.HasPrefix(base, "http://127.0.0.1") {
 			t.Errorf("%s base = %q; an unspecified service must refuse locally, not point at production", name, base)

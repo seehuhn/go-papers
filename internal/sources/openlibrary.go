@@ -211,8 +211,8 @@ func formatRank(format string) int {
 // and others. Qualifying editions are ranked by: whether EditionName
 // contains the same ordinal digit as edition; then Year == year; then
 // Format hardcover > paperback > other/unknown > e-book ("electronic
-// resource", "ebook", "kindle"); then the earliest Year; then the smallest
-// ISBN. pick is the best-ranked edition; others are the rest in that same
+// resource", "ebook", "kindle"); then the earliest Year, with an unknown
+// Year (0) last rather than first; then the smallest ISBN. pick is the best-ranked edition; others are the rest in that same
 // ranked order (next-best first), so a caller can print them as ranked
 // alternatives. ok is false when nothing qualifies.
 func PickEdition(editions []OLEdition, edition string, year int) (pick OLEdition, others []OLEdition, ok bool) {
@@ -257,7 +257,15 @@ func PickEdition(editions []OLEdition, edition string, year int) (pick OLEdition
 		if fa, fb := formatRank(a.Format), formatRank(b.Format); fa != fb {
 			return fa < fb
 		}
+		// The earliest year wins, but a year of 0 means "not parsed",
+		// not "very early", so such an edition sorts last.
 		if a.Year != b.Year {
+			switch {
+			case a.Year == 0:
+				return false
+			case b.Year == 0:
+				return true
+			}
 			return a.Year < b.Year
 		}
 		return a.ISBN < b.ISBN

@@ -232,6 +232,17 @@ func TestPickEdition(t *testing.T) {
 			wantOK:     true,
 		},
 		{
+			name: "an unparsed year sorts last, not first",
+			editions: []OLEdition{
+				mkEdition("9780000000011", 0, "hardcover", ""),
+				mkEdition("9780000000022", 2010, "hardcover", ""),
+				mkEdition("9780000000033", 1990, "hardcover", ""),
+			},
+			wantISBN:   "9780000000033",
+			wantOthers: []string{"9780000000022", "9780000000011"},
+			wantOK:     true,
+		},
+		{
 			name: "smallest ISBN tie-break",
 			editions: []OLEdition{
 				mkEdition("9780000000033", 2000, "hardcover", ""),
