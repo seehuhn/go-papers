@@ -214,7 +214,9 @@ func (r *resolver) recordOnHeldWork(p *store.Paper) error {
 		return fmt.Errorf("resolve: %w", err)
 	}
 	for _, d := range details {
-		fmt.Printf("recorded %s on %s\n", d, held.Key)
+		// d already reads "recorded doi …" or "replaced arXiv DOI … by …",
+		// per RecordIdentifiers's doc comment; no extra verb is added here.
+		fmt.Printf("%s on %s\n", d, held.Key)
 	}
 	for _, problem := range store.CheckPaper(held) {
 		fmt.Printf("check: %s\n", problem.Msg)

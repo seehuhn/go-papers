@@ -110,6 +110,20 @@ func wantLine(t *testing.T, out, label, value string) {
 	t.Errorf("missing line %q in output:\n%s", line, out)
 }
 
+// wantExactLine fails the test unless out holds line exactly as a whole
+// line, not merely as a substring - so that, for example, a doubled verb
+// ("recorded recorded isbn ...") cannot pass a check that only looked for
+// "recorded isbn ..." somewhere in the output.
+func wantExactLine(t *testing.T, out, line string) {
+	t.Helper()
+	for _, got := range strings.Split(out, "\n") {
+		if got == line {
+			return
+		}
+	}
+	t.Errorf("missing line %q in output:\n%s", line, out)
+}
+
 // padLabel renders a label the way resolve's output does, so that the
 // tests check the alignment rather than restate it.
 func padLabel(label string) string {
@@ -370,8 +384,9 @@ func TestResolveRecordsMissingIdentifierOnHeldWork(t *testing.T) {
 	}
 
 	wantLine(t, out, "store", "widgets_1994 (holdings: published)")
-	if !strings.Contains(out, "recorded isbn 9780521406499 on widgets_1994") {
-		t.Errorf("output does not say the ISBN was recorded:\n%s", out)
+	wantExactLine(t, out, "recorded isbn 9780521406499 on widgets_1994")
+	if strings.Contains(out, "recorded recorded") {
+		t.Errorf("the recorded detail must not be prefixed with an extra \"recorded\":\n%s", out)
 	}
 
 	held, loadErr := s.Load("widgets_1994")
@@ -476,8 +491,9 @@ func TestResolveFreeTextRecordsOnTitleMatch(t *testing.T) {
 	}
 
 	wantLine(t, out, "store", "widgets_1994 (holdings: none)")
-	if !strings.Contains(out, "recorded isbn 9780521006019 on widgets_1994") {
-		t.Errorf("output does not say the ISBN was recorded:\n%s", out)
+	wantExactLine(t, out, "recorded isbn 9780521006019 on widgets_1994")
+	if strings.Contains(out, "recorded recorded") {
+		t.Errorf("the recorded detail must not be prefixed with an extra \"recorded\":\n%s", out)
 	}
 
 	held, loadErr := s.Load("widgets_1994")
@@ -504,5 +520,51 @@ func TestResolveNoMatchPrintsNoStoreLine(t *testing.T) {
 	}
 	if strings.Contains(out, "store:") {
 		t.Errorf("nothing is held, so there should be no store: line:\n%s", out)
+	}
+}
+
+// TestResolveReplacesArxivDOIOnHeldWork covers a held entry found by
+// arXiv ID whose DOI is the arXiv-issued stand-in: resolve upgrades it to
+// the journal DOI it found, per RecordIdentifiers's replacement rule, and
+// prints the "replaced arXiv DOI ... by ..." detail unprefixed.
+func TestResolveReplacesArxivDOIOnHeldWork(t *testing.T) {
+	initStore(t, "test@example.org")
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseWithDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	overrideBases(t, crossrefServer(t, crossrefPublishedSPDEResponse), arxivSrv.URL, "", "", "", "", "")
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "voss_2024", Status: "clean", Holdings: "preprint",
+		DOI:   "10.48550/arXiv.2412.05039",
+		Arxiv: &store.ArxivRef{ID: "2412.05039", Version: 1},
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Vo{\\ss}, Jochen", "title": "A study of SPDEs in Greenland", "year": "2024"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"arXiv:2412.05039v2"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLine(t, out, "store", "voss_2024 (holdings: preprint)")
+	wantExactLine(t, out, "replaced arXiv DOI 10.48550/arXiv.2412.05039 by 10.1234/example.doi on voss_2024")
+	if strings.Contains(out, "recorded replaced") {
+		t.Errorf("the replaced detail must not be prefixed with \"recorded\":\n%s", out)
+	}
+
+	held, loadErr := s.Load("voss_2024")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if held.DOI != "10.1234/example.doi" {
+		t.Errorf("DOI = %q, want the journal DOI", held.DOI)
+	}
+	if len(held.Log) != 1 || held.Log[0].Action != "resolve" {
+		t.Errorf("log = %+v, want one resolve entry", held.Log)
 	}
 }
