@@ -122,7 +122,7 @@ func runBib(args []string) error {
 		if i > 0 {
 			fmt.Print("\n")
 		}
-		fmt.Print(bibtex.Format(p.Key, p.Bibtex))
+		fmt.Print(bibtex.Format(p.Key, p.ExportBibtex()))
 	}
 
 	return nil

@@ -691,7 +691,7 @@ func cleanPaperForAudit() *store.Paper {
 // bibForPaper renders p's bibtex entry as a .bib file body, so a test can
 // audit exactly the reference the store already holds.
 func bibForPaper(p *store.Paper) string {
-	return bibtex.Format(p.Key, p.Bibtex)
+	return bibtex.Format(p.Key, p.ExportBibtex())
 }
 
 func TestAuditReportsRecordedClaims(t *testing.T) {
@@ -749,7 +749,7 @@ func TestAuditReportsUnparseableEntriesAndAuditsTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	bib := filepath.Join(dir, "refs.bib")
-	content := bibtex.Format("hoef", p.Bibtex) + "\n@article{broken,\n  journal = nosuchmacro,\n}\n"
+	content := bibtex.Format("hoef", p.ExportBibtex()) + "\n@article{broken,\n  journal = nosuchmacro,\n}\n"
 	if err := os.WriteFile(bib, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -790,7 +790,7 @@ func TestAuditOnlineDownedSourceIsNotADisagreement(t *testing.T) {
 	refuse := refusingServer(t)
 	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
 	bib := filepath.Join(dir, "refs.bib")
-	if err := os.WriteFile(bib, []byte(bibtex.Format("hoef", p.Bibtex)), 0o644); err != nil {
+	if err := os.WriteFile(bib, []byte(bibtex.Format("hoef", p.ExportBibtex())), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

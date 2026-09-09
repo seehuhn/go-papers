@@ -154,6 +154,27 @@ func TestBibDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestBibExportsTopLevelIdentifiers(t *testing.T) {
+	s, _ := fixtureStore(t)
+	p := cleanPaper("hoeffding_1963")
+	delete(p.Bibtex.Fields, "doi")
+	p.ISBN = "9780521006019"
+	s.Save(p)
+
+	out := captureStdout(t, func() {
+		if err := runBib([]string{"hoeffding_1963"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if !strings.Contains(out, "  doi = {10.1080/01621459.1963.10500830},") {
+		t.Errorf("missing top-level doi in output:\n%s", out)
+	}
+	if !strings.Contains(out, "  isbn = {9780521006019},") {
+		t.Errorf("missing top-level isbn in output:\n%s", out)
+	}
+}
+
 func TestBibCorruptedPaperJSON(t *testing.T) {
 	_, dir := fixtureStore(t)
 	entryDir := filepath.Join(dir, "broken_1900")
