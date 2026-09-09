@@ -88,7 +88,7 @@ synced between your machines (e.g. via syncthing).
 
 ## Commands
 
-Eight commands are implemented so far.
+Nine commands are implemented so far.
 
 ### `paper help`
 
@@ -153,6 +153,31 @@ $ paper fetch 10.1080/01621459.1963.10500830
 $ paper fetch arXiv:2412.05039
 $ paper fetch https://users.aalto.fi/~ssarkka/pub/cup_book_online.pdf
 $ paper fetch -into sarkka_2013 https://users.aalto.fi/~ssarkka/pub/cup_book_online.pdf
+```
+
+### `paper resolve <ref>`
+
+Turns a description of a work into its identifiers and prints them: DOI,
+arXiv ID, ISBN, then author, title, year and type. Nothing is created —
+the store gains an entry only through `fetch`. The reference is a DOI, an
+arXiv ID or URL, or free text, resolved exactly as `fetch` resolves one,
+so free text that pins down no single work exits nonzero with the
+candidates to choose between.
+
+The book case is the one `fetch` cannot serve. Crossref seldom carries an
+ISBN, so a work that resolves to `@book` or `@inbook` is looked up at Open
+Library, and the edition matching the year — print before e-book,
+hardcover before paperback — supplies the ISBN, with the remaining
+editions listed after it as alternatives. Free text Crossref does not
+recognise is searched there too, which is how a book with no DOI resolves
+at all.
+
+When the store already holds the work, resolve names the entry and its
+holdings, and records on it any identifier it was missing.
+
+```bash
+$ paper resolve 10.1017/CBO9781139344203
+$ paper resolve Applied Cryptography, Schneier, 1996
 ```
 
 ### `paper ingest [-since <ts>] [-into <key>] [-doi <doi>] [-arxiv <id>] <file.pdf>...`

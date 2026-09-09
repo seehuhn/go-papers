@@ -109,19 +109,19 @@ func fetchFixtureStore(t *testing.T) string {
 	return dir
 }
 
-// overrideBases points the six source clients at test servers. An
+// overrideBases points the seven source clients at test servers. An
 // empty string does NOT keep the production URL: the service is pointed
 // at a server that fails the test on contact. No test may reach a live
 // API, and this helper is where that rule is enforced rather than
 // remembered.
-func overrideBases(t *testing.T, crossref, arxiv, unpaywall, zbmath, dblp, handle string) {
+func overrideBases(t *testing.T, crossref, arxiv, unpaywall, zbmath, dblp, handle, openLibrary string) {
 	t.Helper()
 	saved := []struct {
 		p   *string
 		old string
 	}{{&crossrefBase, crossrefBase}, {&arxivBase, arxivBase},
 		{&unpaywallBase, unpaywallBase}, {&zbmathBase, zbmathBase}, {&dblpBase, dblpBase},
-		{&handleBase, handleBase}}
+		{&handleBase, handleBase}, {&openLibraryBase, openLibraryBase}}
 	t.Cleanup(func() {
 		for _, s := range saved {
 			*s.p = s.old
@@ -143,6 +143,7 @@ func overrideBases(t *testing.T, crossref, arxiv, unpaywall, zbmath, dblp, handl
 	zbmathBase = pick(zbmath)
 	dblpBase = pick(dblp)
 	handleBase = pick(handle)
+	openLibraryBase = pick(openLibrary)
 }
 
 // confirmingHandleServer returns the URL of a handle-resolver stub that
@@ -175,7 +176,7 @@ func TestFetchDOIWithOA(t *testing.T) {
 		fmt.Fprintf(w, `{"is_oa":true,"best_oa_location":{"url_for_pdf":%q,"host_type":"repository"}}`, pdfSrv.URL)
 	}))
 	t.Cleanup(upwSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, "", "", "", "")
 
 	err := runFetch([]string{"10.1080/01621459.1963.10500830"})
 	if err != nil {
@@ -204,7 +205,7 @@ func TestFetchDOIWithoutOA(t *testing.T) {
 		io.WriteString(w, `{"is_oa":false,"best_oa_location":null}`)
 	}))
 	t.Cleanup(upwSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, "", "", "", "")
 
 	err := runFetch([]string{"10.1080/01621459.1963.10500830"})
 	if err == nil {
@@ -236,7 +237,7 @@ func TestFetchArxiv(t *testing.T) {
 		io.WriteString(w, arxivResponseNoDOI)
 	}))
 	t.Cleanup(arxivSrv.Close)
-	overrideBases(t, "", arxivSrv.URL, "", "", "", "")
+	overrideBases(t, "", arxivSrv.URL, "", "", "", "", "")
 	// downloads must hit the test server, not arxiv.org
 	savedDL := arxivDownloadBase
 	arxivDownloadBase = pdfSrv.URL
@@ -295,7 +296,7 @@ func TestFetchArxivEntryPassesCheck(t *testing.T) {
 		io.WriteString(w, arxivResponseNoDOI)
 	}))
 	t.Cleanup(arxivSrv.Close)
-	overrideBases(t, "", arxivSrv.URL, "", "", "", "")
+	overrideBases(t, "", arxivSrv.URL, "", "", "", "", "")
 	savedDL := arxivDownloadBase
 	arxivDownloadBase = pdfSrv.URL
 	t.Cleanup(func() { arxivDownloadBase = savedDL })
@@ -333,7 +334,7 @@ func TestFetchArxivPDFFailureReportsContext(t *testing.T) {
 		io.WriteString(w, arxivResponseNoDOI)
 	}))
 	t.Cleanup(arxivSrv.Close)
-	overrideBases(t, "", arxivSrv.URL, "", "", "", "")
+	overrideBases(t, "", arxivSrv.URL, "", "", "", "", "")
 	savedDL := arxivDownloadBase
 	arxivDownloadBase = pdfSrv.URL
 	t.Cleanup(func() { arxivDownloadBase = savedDL })
@@ -378,7 +379,7 @@ func TestFetchArxivDuplicateDOI(t *testing.T) {
 		t.Errorf("a known duplicate must not be looked up or downloaded: %s", r.URL)
 	}))
 	t.Cleanup(guardSrv.Close)
-	overrideBases(t, guardSrv.URL, arxivSrv.URL, "", "", "", "")
+	overrideBases(t, guardSrv.URL, arxivSrv.URL, "", "", "", "", "")
 	savedDL := arxivDownloadBase
 	arxivDownloadBase = guardSrv.URL
 	t.Cleanup(func() { arxivDownloadBase = savedDL })
@@ -471,7 +472,7 @@ func TestFetchFreeTextAmbiguous(t *testing.T) {
 		io.WriteString(w, `{"result":{"hits":{}}}`)
 	}))
 	t.Cleanup(dblpSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", zbSrv.URL, dblpSrv.URL, "")
+	overrideBases(t, crossrefSrv.URL, "", "", zbSrv.URL, dblpSrv.URL, "", "")
 
 	err := runFetch([]string{"some ambiguous title"})
 	if err == nil || !strings.Contains(err.Error(), "re-run") {
@@ -524,7 +525,7 @@ func TestFetchFreeTextAccepted(t *testing.T) {
 		t.Errorf("candidate search must not run after an accepted hit: %s", r.URL)
 	}))
 	t.Cleanup(candSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, candSrv.URL, candSrv.URL, "")
+	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, candSrv.URL, candSrv.URL, "", "")
 
 	err := runFetch([]string{"Hoeffding", "probability", "inequalities", "1963"})
 	if err != nil {
@@ -561,7 +562,7 @@ func TestFetchFreeTextNoYear(t *testing.T) {
 		t.Errorf("candidate search must not run after an accepted hit: %s", r.URL)
 	}))
 	t.Cleanup(candSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, candSrv.URL, candSrv.URL, "")
+	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, candSrv.URL, candSrv.URL, "", "")
 
 	if err := runFetch([]string{"Hoeffding probability inequalities"}); err != nil {
 		t.Fatal(err)
@@ -588,7 +589,7 @@ func TestFetchFreeTextYearMismatch(t *testing.T) {
 		io.WriteString(w, `{"result":{"hits":{}}}`)
 	}))
 	t.Cleanup(dblpSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", zbSrv.URL, dblpSrv.URL, "")
+	overrideBases(t, crossrefSrv.URL, "", "", zbSrv.URL, dblpSrv.URL, "", "")
 
 	err := runFetch([]string{"Hoeffding probability inequalities 1994"})
 	if err == nil || !strings.Contains(err.Error(), "re-run") {
@@ -611,7 +612,7 @@ func TestFetchDuplicate(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "", "")
 
 	err := runFetch([]string{"10.1080/01621459.1963.10500830"})
 	if err == nil || !strings.Contains(err.Error(), "hoeffding_1963") {
@@ -637,7 +638,7 @@ func TestFetchDryRun(t *testing.T) {
 		fmt.Fprintf(w, `{"is_oa":true,"best_oa_location":{"url_for_pdf":%q,"host_type":"repository"}}`, pdfSrv.URL)
 	}))
 	t.Cleanup(upwSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", upwSrv.URL, "", "", "", "")
 
 	var out string
 	runErr := error(nil)
@@ -710,7 +711,7 @@ func TestFetchPDFURLCreatesEntry(t *testing.T) {
 		t.Errorf("only Crossref and the handle resolver may be consulted when the PDF is already in hand: %s", r.URL)
 	}))
 	t.Cleanup(noSrv.Close)
-	overrideBases(t, crossrefSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, confirmingHandleServer(t))
+	overrideBases(t, crossrefSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, noSrv.URL, confirmingHandleServer(t), "")
 
 	url := pdfSrv.URL + "/pub/cup_book_online.pdf"
 	if err := runFetch([]string{url}); err != nil {
@@ -866,7 +867,7 @@ func TestFetchPDFURLWithDOI(t *testing.T) {
 		io.WriteString(w, crossrefWorkResponse)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "", "")
 
 	err := runFetch([]string{"-doi", "10.1080/01621459.1963.10500830", url})
 	if err != nil {
@@ -957,7 +958,7 @@ func TestFetchPDFURLUnidentifiedHandsOffToFetch(t *testing.T) {
 		io.WriteString(w, `{"status":"ok","message-type":"work-list","message":{"items":[]}}`)
 	}))
 	t.Cleanup(crossrefSrv.Close)
-	overrideBases(t, crossrefSrv.URL, "", "", "", "", "")
+	overrideBases(t, crossrefSrv.URL, "", "", "", "", "", "")
 
 	err := runFetch([]string{url})
 	if err == nil {
@@ -973,7 +974,7 @@ func TestFetchPDFURLUnidentifiedHandsOffToFetch(t *testing.T) {
 }
 
 func TestOverrideBasesRefusesUnspecifiedServices(t *testing.T) {
-	overrideBases(t, "http://example.test/cr", "", "", "", "", "")
+	overrideBases(t, "http://example.test/cr", "", "", "", "", "", "")
 
 	for name, base := range map[string]string{
 		"arxiv": arxivBase, "unpaywall": unpaywallBase,

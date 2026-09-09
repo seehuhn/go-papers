@@ -74,9 +74,9 @@ func init() {
 	})
 }
 
-// Base URLs of the online services fetch and audit talk to. These are
-// variables rather than constants so that tests can point them at httptest
-// servers; nothing else ever changes them.
+// Base URLs of the online services fetch, resolve and audit talk to.
+// These are variables rather than constants so that tests can point them
+// at httptest servers; nothing else ever changes them.
 var (
 	crossrefBase      = "https://api.crossref.org"
 	arxivBase         = "https://export.arxiv.org"
@@ -84,6 +84,7 @@ var (
 	zbmathBase        = "https://api.zbmath.org"
 	dblpBase          = "https://dblp.org"
 	handleBase        = "https://doi.org"
+	openLibraryBase   = "https://openlibrary.org"
 	arxivDownloadBase = "https://arxiv.org"
 )
 
@@ -596,18 +597,7 @@ func (f *fetcher) ambiguousError(query string, hits []*sources.CrossrefWork) err
 		b.WriteString("\nNo candidates were found in Crossref, zbMATH, or DBLP.\n")
 	} else {
 		b.WriteString("\nCandidates:\n")
-		for i, c := range candidates {
-			fmt.Fprintf(&b, "  [%d] %s: %s (%s)\n", i+1, c.Source, authorList(c.Authors), yearString(c.Year))
-			fmt.Fprintf(&b, "      title: %s\n", c.Title)
-			if c.Venue != "" {
-				fmt.Fprintf(&b, "      in:    %s\n", c.Venue)
-			}
-			if c.DOI != "" {
-				fmt.Fprintf(&b, "      doi:   https://doi.org/%s\n", c.DOI)
-			} else {
-				b.WriteString("      doi:   (none given)\n")
-			}
-		}
+		writeCandidateList(&b, candidates)
 	}
 	for _, n := range notes {
 		fmt.Fprintf(&b, "\n%s\n", n)
@@ -618,6 +608,25 @@ func (f *fetcher) ambiguousError(query string, hits []*sources.CrossrefWork) err
 	b.WriteString("  paper fetch arXiv:2412.05039\n")
 	b.WriteString("If none of these is right, search the open web for the paper's DOI or arXiv ID first.")
 	return wrapOutcome("ambiguous", errors.New(b.String()))
+}
+
+// writeCandidateList writes one numbered block per candidate — source,
+// authors, year, title, venue and DOI — into b. Both fetch and resolve
+// hand the calling agent a list of works to choose between when a free
+// text reference pins none of them down, and they list them the same way.
+func writeCandidateList(b *strings.Builder, candidates []sources.Candidate) {
+	for i, c := range candidates {
+		fmt.Fprintf(b, "  [%d] %s: %s (%s)\n", i+1, c.Source, authorList(c.Authors), yearString(c.Year))
+		fmt.Fprintf(b, "      title: %s\n", c.Title)
+		if c.Venue != "" {
+			fmt.Fprintf(b, "      in:    %s\n", c.Venue)
+		}
+		if c.DOI != "" {
+			fmt.Fprintf(b, "      doi:   https://doi.org/%s\n", c.DOI)
+		} else {
+			b.WriteString("      doi:   (none given)\n")
+		}
+	}
 }
 
 // exampleDOI picks a DOI to show in the re-run instructions: the first

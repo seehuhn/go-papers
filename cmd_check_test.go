@@ -247,7 +247,7 @@ func TestCheckOnline(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	overrideBases(t, srv.URL, "", "", "", "", "")
+	overrideBases(t, srv.URL, "", "", "", "", "", "")
 
 	out := captureStdout(t, func() {
 		err := runCheck([]string{"-online"})
@@ -302,7 +302,7 @@ func TestCheckOnlineDoesNotMisreadA5xxBodyAsNotFound(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	overrideBases(t, srv.URL, "", "", "", "", "")
+	overrideBases(t, srv.URL, "", "", "", "", "", "")
 
 	out := captureStdout(t, func() {
 		if err := runCheck([]string{"-online"}); err == nil {

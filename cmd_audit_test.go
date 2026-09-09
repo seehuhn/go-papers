@@ -54,7 +54,7 @@ func TestAuditConfirmsAResolvableDOI(t *testing.T) {
 	}))
 	t.Cleanup(crossrefSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, "")
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{hoef,
@@ -103,7 +103,7 @@ func TestAuditReportsNotFoundWhenNothingMatches(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{ghost,
@@ -139,7 +139,7 @@ func TestAuditReportsUnverifiedWithCandidates(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, near.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, near.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{giles,
@@ -179,7 +179,7 @@ func TestAuditOnlineRechecksStoreEntries(t *testing.T) {
 	}))
 	t.Cleanup(crossrefSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, "")
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte("@article{h,\n  doi = {10.1080/01621459.1963.10500830},\n"+
@@ -218,7 +218,7 @@ func TestAuditOnlineNeverDemotesAStoreConfirmedEntry(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte("@article{h,\n  doi = {10.1080/01621459.1963.10500830},\n"+
@@ -268,7 +268,7 @@ func TestAuditConfirmsWhenTitleClearsBarAndCorroborates(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{huber,
@@ -307,7 +307,7 @@ func TestAuditUnverifiedWhenTitleClearsBarButDoesNotCorroborate(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, hit.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{smith,
@@ -343,7 +343,7 @@ func TestAuditDOILookupFailureIsUnchecked(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{d,
@@ -385,7 +385,7 @@ func TestAuditConfirmsDOIViaHandleWhenCrossrefMisses(t *testing.T) {
 	}))
 	t.Cleanup(handleSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, handleSrv.URL)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, handleSrv.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@misc{zen,
@@ -432,7 +432,7 @@ func TestAuditDOIUnknownEverywhereFallsToSearch(t *testing.T) {
 	}))
 	t.Cleanup(emptyList.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, emptyList.URL, emptyList.URL, handleSrv.URL)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, emptyList.URL, emptyList.URL, handleSrv.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{bogus,
@@ -474,7 +474,7 @@ func TestAuditDOICrossrefMissHandleDownIsUnchecked(t *testing.T) {
 	}))
 	t.Cleanup(handleSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, handleSrv.URL)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, handleSrv.URL, "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{downhandle,
@@ -508,7 +508,7 @@ func TestAuditAllSearchSourcesDownIsUnchecked(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, down.URL, down.URL, "")
+	overrideBases(t, down.URL, refuse, refuse, down.URL, down.URL, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@article{e,
@@ -542,7 +542,7 @@ func TestAuditConfirmsViaArxivID(t *testing.T) {
 	}))
 	t.Cleanup(arxivSrv.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, refuse, arxivSrv.URL, refuse, refuse, refuse, "")
+	overrideBases(t, refuse, arxivSrv.URL, refuse, refuse, refuse, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(`@misc{voss,
@@ -618,7 +618,7 @@ func TestAuditNeverWritesToTheStore(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte("@article{k,\n  title = {Nothing},\n  year = {1999},\n}"), 0o644)
 	before := storeSnapshot(t, dir)
@@ -656,7 +656,7 @@ func TestAuditStoreHeldDraftIsNeverCalledHallucinated(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 
 	bib := filepath.Join(dir, "refs.bib")
 	os.WriteFile(bib, []byte(bibForPaper(p)), 0o644)
@@ -788,7 +788,7 @@ func TestAuditOnlineDownedSourceIsNotADisagreement(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	refuse := refusingServer(t)
-	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "")
+	overrideBases(t, down.URL, refuse, refuse, refuse, refuse, "", "")
 	bib := filepath.Join(dir, "refs.bib")
 	if err := os.WriteFile(bib, []byte(bibtex.Format("hoef", p.ExportBibtex())), 0o644); err != nil {
 		t.Fatal(err)
@@ -818,7 +818,7 @@ func TestAuditReportsDuplicateCitationKeys(t *testing.T) {
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(emptyList.Close)
-	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "")
+	overrideBases(t, empty.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
 	bib := filepath.Join(dir, "refs.bib")
 	content := "@misc{twice,\n  title = {First use},\n}\n" +
 		"@misc{once,\n  title = {Fine},\n}\n" +
