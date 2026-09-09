@@ -62,7 +62,7 @@ entry, not just that field. Fields:
     audit     {"claims": [...]}, see below
     log       acquisition and correction history: append, never rewrite
 
-Identifiers are kept: doi and isbn, once verified, are never deleted
+Identifiers are kept: doi and isbn, once recorded, are never deleted
 or replaced by hand; a bibtex doi or isbn field is promoted to the
 top-level field, which "paper bib" exports over the bibtex field; a
 wrong identifier is corrected only together with a log line saying

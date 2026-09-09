@@ -32,12 +32,6 @@ directory name and the bibtex key. `paper check` enforces that the two match.
 Everything is plain files: no database, no derived index. The store must
 stay navigable by a human without tooling.
 
-Identifiers are kept: `doi` and `isbn`, once verified, are never deleted or
-replaced by hand; a bibtex `doi` or `isbn` field is promoted to the
-top-level field, which `paper bib` exports over the bibtex field; a wrong
-identifier is corrected only together with a log line saying why. `paper
-resolve` records identifiers it finds on entries that lack them.
-
 ### `.paper-store.json`
 
 The marker that makes a directory a store, written by `paper init`:
@@ -300,3 +294,8 @@ Every store mutation goes through a `paper` command or ends with a passing
 `paper check`. Agents never free-form-manage the store: if `paper` cannot do
 something directly, edit `paper.json` by hand and then run `paper check` to
 validate the result.
+
+Identifiers are kept: `doi` and `isbn`, once recorded, are never deleted or
+replaced by hand; a bibtex `doi` or `isbn` field is promoted to the
+top-level field, which `paper bib` exports over the bibtex field; a wrong
+identifier is corrected only together with a log line saying why.
