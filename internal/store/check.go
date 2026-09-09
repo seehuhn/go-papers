@@ -25,6 +25,7 @@ import (
 
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/doi"
+	"seehuhn.de/go/paper/internal/isbn"
 	"seehuhn.de/go/paper/internal/tex"
 )
 
@@ -79,6 +80,9 @@ func CheckPaper(p *Paper) []Problem {
 	problems = append(problems, checkFieldEncoding(p)...)
 	problems = append(problems, checkRawSpecials(p)...)
 	problems = append(problems, checkDOI(p)...)
+	problems = append(problems, checkISBN(p)...)
+	problems = append(problems, checkPromoteIdentifiers(p)...)
+	problems = append(problems, checkBookHasISBN(p)...)
 	problems = append(problems, checkArxiv(p)...)
 	problems = append(problems, checkStatusHoldings(p)...)
 	problems = append(problems, checkPages(p)...)
@@ -253,6 +257,50 @@ func checkDOI(p *Paper) []Problem {
 		"doi: %q does not look like a valid DOI (expected form 10.NNNN/suffix)", p.DOI)}}
 }
 
+// Rule 6a: ISBN set but not a valid ISBN-10 or ISBN-13 (checksum or
+// length; see isbn.Valid).
+func checkISBN(p *Paper) []Problem {
+	if p.ISBN == "" || isbn.Valid(p.ISBN) {
+		return nil
+	}
+	return []Problem{{p.Key, "error", fmt.Sprintf(
+		"isbn: %q is not a valid ISBN-10 or ISBN-13 (checksum or length)", p.ISBN)}}
+}
+
+// Rule 6b: bibtex.fields.doi or bibtex.fields.isbn is set but the
+// corresponding top-level field is empty. The top-level field is meant
+// to be a copy of the bibtex value, kept for fast lookups; an entry that
+// has the bibtex field but not the top-level copy is missing that
+// promotion, whether from a fetch that forgot or a hand edit that
+// deleted the top-level copy.
+func checkPromoteIdentifiers(p *Paper) []Problem {
+	var problems []Problem
+	if fieldDOI := p.Bibtex.Fields["doi"]; fieldDOI != "" && p.DOI == "" {
+		problems = append(problems, Problem{p.Key, "error", fmt.Sprintf(
+			`doi: bibtex.fields.doi %q is set but top-level doi is empty; copy it to the top-level "doi" field (never delete it)`,
+			fieldDOI)})
+	}
+	if fieldISBN := p.Bibtex.Fields["isbn"]; fieldISBN != "" && p.ISBN == "" {
+		problems = append(problems, Problem{p.Key, "error", fmt.Sprintf(
+			`isbn: bibtex.fields.isbn %q is set but top-level isbn is empty; copy it to the top-level "isbn" field (never delete it)`,
+			fieldISBN)})
+	}
+	return problems
+}
+
+// Rule 6c: type book or inbook but no bibtex.fields.isbn and no
+// top-level ISBN.
+func checkBookHasISBN(p *Paper) []Problem {
+	if p.Bibtex.Type != "book" && p.Bibtex.Type != "inbook" {
+		return nil
+	}
+	if p.Bibtex.Fields["isbn"] != "" || p.ISBN != "" {
+		return nil
+	}
+	return []Problem{{p.Key, "warning",
+		"isbn: book entry has no bibtex.fields.isbn and no top-level ISBN"}}
+}
+
 // Rule 7: Arxiv.ID set but matching neither the new nor the old arXiv id
 // style.
 func checkArxiv(p *Paper) []Problem {
@@ -381,12 +429,15 @@ func checkDraftStatus(p *Paper) []Problem {
 	return []Problem{{p.Key, "warning", "status: paper is still in draft status"}}
 }
 
-// Rule 13: bibtex.fields.doi/eprint inconsistent with top-level
-// DOI/Arxiv when both are set.
+// Rule 13: bibtex.fields.doi/eprint/isbn inconsistent with top-level
+// DOI/Arxiv/ISBN when both are set. DOI comparison is case-insensitive,
+// since DOIs are case-insensitive by definition; ISBN comparison goes
+// through isbn.Equal, so a hyphenated ISBN-10 in the bibtex field is
+// consistent with its digits-only ISBN-13 form at the top level.
 func checkConsistency(p *Paper) []Problem {
 	var problems []Problem
 
-	if fieldDOI := p.Bibtex.Fields["doi"]; fieldDOI != "" && p.DOI != "" && fieldDOI != p.DOI {
+	if fieldDOI := p.Bibtex.Fields["doi"]; fieldDOI != "" && p.DOI != "" && !strings.EqualFold(fieldDOI, p.DOI) {
 		problems = append(problems, Problem{p.Key, "error", fmt.Sprintf(
 			"doi: bibtex.fields.doi %q does not match top-level DOI %q", fieldDOI, p.DOI)})
 	}
@@ -394,6 +445,11 @@ func checkConsistency(p *Paper) []Problem {
 	if fieldEprint := p.Bibtex.Fields["eprint"]; fieldEprint != "" && p.Arxiv != nil && p.Arxiv.ID != "" && fieldEprint != p.Arxiv.ID {
 		problems = append(problems, Problem{p.Key, "error", fmt.Sprintf(
 			"arxiv: bibtex.fields.eprint %q does not match top-level Arxiv.ID %q", fieldEprint, p.Arxiv.ID)})
+	}
+
+	if fieldISBN := p.Bibtex.Fields["isbn"]; fieldISBN != "" && p.ISBN != "" && !isbn.Equal(fieldISBN, p.ISBN) {
+		problems = append(problems, Problem{p.Key, "error", fmt.Sprintf(
+			"isbn: bibtex.fields.isbn %q does not match top-level ISBN %q", fieldISBN, p.ISBN)})
 	}
 
 	return problems

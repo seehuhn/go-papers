@@ -94,8 +94,10 @@ func TestCheckRequiredFieldGroupSatisfiedByEditor(t *testing.T) {
 				"title":     "A collection of essays",
 				"publisher": "Acme Press",
 				"year":      "2020",
+				"isbn":      "0-521-00601-5",
 			},
 		},
+		ISBN:     "9780521006019",
 		Holdings: "none",
 	}
 	if ps := CheckPaper(p); len(ps) != 0 {
@@ -181,6 +183,92 @@ func TestCheckSubdividedRegistrantDOIAccepted(t *testing.T) {
 	p.Bibtex.Fields["doi"] = "10.1000.10/123456"
 	if problemsContain(CheckPaper(p), "does not look like a valid DOI") {
 		t.Errorf("sub-divided registrant DOI must be accepted as syntactically valid")
+	}
+}
+
+// Rule 6a
+func TestCheckInvalidISBN(t *testing.T) {
+	p := makeCleanPaper()
+	p.ISBN = "0-521-00601-4" // bad checksum
+	if !problemsContain(CheckPaper(p), "is not a valid ISBN-10 or ISBN-13") {
+		t.Error("missing invalid-ISBN problem")
+	}
+}
+
+func TestCheckValidISBNOK(t *testing.T) {
+	p := makeCleanPaper()
+	p.ISBN = "0-521-00601-5"
+	if problemsContain(CheckPaper(p), "is not a valid ISBN-10 or ISBN-13") {
+		t.Error("valid ISBN must not report a problem")
+	}
+}
+
+// Rule 6b
+func TestCheckPromoteDOI(t *testing.T) {
+	p := makeCleanPaper()
+	p.DOI = ""
+	if !problemsContain(CheckPaper(p), `bibtex.fields.doi "10.1080/01621459.1963.10500830" is set but top-level doi is empty`) {
+		t.Error("missing promote-DOI problem")
+	}
+}
+
+func TestCheckPromoteISBN(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["isbn"] = "0-521-00601-5"
+	if !problemsContain(CheckPaper(p), `bibtex.fields.isbn "0-521-00601-5" is set but top-level isbn is empty`) {
+		t.Error("missing promote-ISBN problem")
+	}
+}
+
+func TestCheckPromoteIdentifiersOKWhenBothSet(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["isbn"] = "0-521-00601-5"
+	p.ISBN = "9780521006019"
+	if problemsContain(CheckPaper(p), "is set but top-level") {
+		t.Error("both fields set must not report a promote problem")
+	}
+}
+
+// Rule 6c
+func TestCheckBookMissingISBN(t *testing.T) {
+	p := &Paper{
+		Key:    "essays_2020",
+		Status: "clean",
+		Bibtex: bibtex.Entry{
+			Type: "book",
+			Fields: map[string]string{
+				"editor":    "Smith, Jane",
+				"title":     "A collection of essays",
+				"publisher": "Acme Press",
+				"year":      "2020",
+			},
+		},
+		Holdings: "none",
+	}
+	if !problemsContain(CheckPaper(p), "book entry has no bibtex.fields.isbn and no top-level ISBN") {
+		t.Error("missing book-missing-ISBN warning")
+	}
+}
+
+func TestCheckBookWithISBNOK(t *testing.T) {
+	p := &Paper{
+		Key:    "essays_2020",
+		Status: "clean",
+		Bibtex: bibtex.Entry{
+			Type: "book",
+			Fields: map[string]string{
+				"editor":    "Smith, Jane",
+				"title":     "A collection of essays",
+				"publisher": "Acme Press",
+				"year":      "2020",
+				"isbn":      "0-521-00601-5",
+			},
+		},
+		ISBN:     "9780521006019",
+		Holdings: "none",
+	}
+	if problemsContain(CheckPaper(p), "book entry has no bibtex.fields.isbn") {
+		t.Error("book with ISBN must not report a missing-ISBN warning")
 	}
 }
 
@@ -271,6 +359,33 @@ func TestCheckEprintInconsistent(t *testing.T) {
 	p.Arxiv = &ArxivRef{ID: "8765.4321"}
 	if !problemsContain(CheckPaper(p), "8765.4321") {
 		t.Error("missing eprint-inconsistency problem")
+	}
+}
+
+func TestCheckDOICaseInsensitive(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["doi"] = "10.1000/AbCdEf"
+	p.DOI = "10.1000/abcdef"
+	if problemsContain(CheckPaper(p), "does not match top-level DOI") {
+		t.Error("DOI comparison must be case-insensitive")
+	}
+}
+
+func TestCheckISBNInconsistent(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["isbn"] = "0-521-00601-5" // -> 9780521006019
+	p.ISBN = "9780306406157"
+	if !problemsContain(CheckPaper(p), "9780306406157") {
+		t.Error("missing ISBN-inconsistency problem")
+	}
+}
+
+func TestCheckISBNHyphenatedConsistentOK(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["isbn"] = "0-521-00601-5"
+	p.ISBN = "9780521006019"
+	if problemsContain(CheckPaper(p), "does not match top-level ISBN") {
+		t.Error("hyphenated bibtex ISBN matching digits-only top-level ISBN must be consistent")
 	}
 }
 
