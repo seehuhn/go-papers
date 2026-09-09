@@ -41,3 +41,31 @@ func TestTitleSimilarity(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleCoverage(t *testing.T) {
+	cases := []struct {
+		title, text string
+		min, max    float64
+	}{
+		// The reference shape resolve documents: the title plus an
+		// author and a year, which must not count against the match.
+		{"Applied Cryptography", "Applied Cryptography, Schneier, 1996", 1.0, 1.0},
+		{"Applied Cryptography", "Bruce Schneier, Applied Cryptography, 2nd ed., 1996", 1.0, 1.0},
+		{`A study of {SPDEs} in {G}reenland`, "Voss, A study of SPDEs in Greenland, 2024", 1.0, 1.0},
+		{"A Book About Widgets", "A Book About Widgets", 1.0, 1.0},
+		// Two of five title tokens are missing from the text.
+		{"Large deviations for diffusion processes", "Large deviations for diffusions", 0.55, 0.65},
+		{"Probability and Measure", "Applied Cryptography, Schneier, 1996", 0.0, 0.0},
+		// A one-token title occurs in far too much to be trusted, so it
+		// counts only when the text is that one token and nothing else.
+		{"Ulysses", "Ulysses, Joyce, 1922", 0.0, 0.0},
+		{"Ulysses", "ulysses.", 1.0, 1.0},
+		{"", "anything at all", 0.0, 0.0},
+	}
+	for _, c := range cases {
+		got := TitleCoverage(c.title, c.text)
+		if got < c.min || got > c.max {
+			t.Errorf("TitleCoverage(%q, %q) = %v, want in [%v, %v]", c.title, c.text, got, c.min, c.max)
+		}
+	}
+}

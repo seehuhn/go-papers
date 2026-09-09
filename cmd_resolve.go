@@ -62,11 +62,13 @@ func init() {
 	})
 }
 
-// olTitleMinScore is the match.TitleSimilarity an Open Library work's
-// title must reach before resolve takes it to be the work being asked
-// about. Open Library's search is title-driven and answers generously,
-// so the bar has to be high enough that a merely related book is not
-// mistaken for the one wanted.
+// olTitleMinScore is the score an Open Library work's title must reach
+// before resolve takes it to be the work being asked about - the
+// match.TitleCoverage of a free-text reference, or the
+// match.TitleSimilarity of an already-resolved title. Open Library's
+// search is title-driven and answers generously, so the bar has to be
+// high enough that a merely related book is not mistaken for the one
+// wanted.
 const olTitleMinScore = 0.8
 
 // runResolve implements the "paper resolve" command: it resolves a
@@ -242,15 +244,17 @@ func (r *resolver) resolveText(query string) (*store.Paper, string, error) {
 	return nil, "", r.ambiguousWork(query, hits, works, olErr)
 }
 
-// onlyCloseMatch returns the single Open Library work whose title is
-// close enough to the query text to be the work being asked about. It
-// reports false when no work is that close and also when several are:
-// free text that fits two books resolves to neither.
+// onlyCloseMatch returns the single Open Library work whose title the
+// reference text carries. The test is containment, not similarity: a
+// reference is typed as "Author, Title, year", so it holds words the
+// title does not, and match.TitleCoverage is the asymmetric measure that
+// ignores them. It reports false when no work clears the bar and also
+// when several do: free text that fits two books resolves to neither.
 func onlyCloseMatch(works []sources.OLWork, text string) (sources.OLWork, bool) {
 	var found sources.OLWork
 	n := 0
 	for _, w := range works {
-		if match.TitleSimilarity(text, w.Title) >= olTitleMinScore {
+		if match.TitleCoverage(w.Title, text) >= olTitleMinScore {
 			found, n = w, n+1
 		}
 	}
@@ -284,7 +288,7 @@ func (r *resolver) ambiguousWork(query string, hits []*sources.CrossrefWork, wor
 	b.WriteString("\nPick the intended work and re-run resolve with its identifier, e.g.\n")
 	fmt.Fprintf(&b, "  paper resolve %s\n", exampleDOI(candidates))
 	b.WriteString("  paper resolve arXiv:2412.05039\n")
-	b.WriteString("If none of these is right, search the open web for the work's DOI or ISBN first.")
+	b.WriteString("If none of these is right, search the open web for the work's DOI or arXiv ID first.")
 	return wrapOutcome("ambiguous", errors.New(b.String()))
 }
 
@@ -302,24 +306,20 @@ func olCandidate(w sources.OLWork) sources.Candidate {
 
 // paperFromOLWork builds the draft entry for a work only Open Library
 // knows about. Open Library reports natural-order plain-unicode author
-// names, which are split on their last space exactly as resolve.FromArxiv
-// splits arXiv's: crude but deterministic, and a resolve run writes
-// nothing, so a misplaced name costs a reading of the output rather than
-// a wrong store entry.
+// names, the same shape arXiv uses, so resolve.BibtexAuthors splits and
+// encodes them - by the same rule, so that the same book keys the same
+// way whichever service named it.
 func paperFromOLWork(w sources.OLWork) (*store.Paper, error) {
 	if w.Title == "" {
 		return nil, fmt.Errorf("open library work %s: missing title", w.Key)
 	}
-	if len(w.Authors) == 0 {
-		return nil, fmt.Errorf("open library work %s: missing authors", w.Key)
+	author, err := resolve.BibtexAuthors(w.Authors)
+	if err != nil {
+		return nil, fmt.Errorf("open library work %s: %w", w.Key, err)
 	}
 
-	names := make([]string, len(w.Authors))
-	for i, name := range w.Authors {
-		names[i] = bibtexName(name)
-	}
 	fields := map[string]string{
-		"author": strings.Join(names, " and "),
+		"author": author,
 		"title":  bibtex.BraceTitle(tex.Encode(w.Title)),
 	}
 	if w.FirstYear != 0 {
@@ -331,20 +331,6 @@ func paperFromOLWork(w sources.OLWork) (*store.Paper, error) {
 		Holdings: "none",
 		Bibtex:   bibtex.Entry{Type: "book", Fields: fields},
 	}, nil
-}
-
-// bibtexName renders a natural-order plain-unicode name ("Bruce
-// Schneier") as a bibtex-encoded "Last, First". A name with no space is
-// taken to be entirely a family name.
-func bibtexName(name string) string {
-	family, given := name, ""
-	if i := strings.LastIndex(name, " "); i >= 0 {
-		family, given = name[i+1:], name[:i]
-	}
-	if given == "" {
-		return tex.Encode(family)
-	}
-	return tex.Encode(family) + ", " + tex.Encode(given)
 }
 
 // wantsISBN reports whether the resolved work should have its ISBN looked

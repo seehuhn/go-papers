@@ -170,7 +170,8 @@ Library, and the edition matching the year — print before e-book,
 hardcover before paperback — supplies the ISBN, with the remaining
 editions listed after it as alternatives. Free text Crossref does not
 recognise is searched there too, which is how a book with no DOI resolves
-at all.
+at all. Open Library failing to answer is reported as a `note:` line, so
+that a service being down is never read as a book having no ISBN.
 
 When the store already holds the work, resolve names the entry and its
 holdings, and records on it any identifier it was missing.

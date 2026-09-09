@@ -202,7 +202,7 @@ func FromArxiv(e *sources.ArxivEntry) (*store.Paper, error) {
 		return nil, fmt.Errorf("arxiv entry %s: missing year", identity)
 	}
 
-	authorField, err := encodeArxivAuthors(e.Authors)
+	authorField, err := BibtexAuthors(e.Authors)
 	if err != nil {
 		return nil, fmt.Errorf("arxiv entry %s: %w", identity, err)
 	}
@@ -314,17 +314,23 @@ func encodeCrossrefAuthors(authors []sources.CrossrefAuthor) (string, error) {
 	return strings.Join(parts, " and "), nil
 }
 
-// encodeArxivAuthors builds a bibtex author field from arXiv's
-// natural-order plain-unicode names ("Jochen Voß"), splitting each on the
-// last space into given/family (crude but deterministic; repair is a
-// later, human-in-the-loop task) and tex.Encoding the result.
-func encodeArxivAuthors(names []string) (string, error) {
+// BibtexAuthors builds a bibtex author field from natural-order
+// plain-unicode names ("Jochen Voß"), splitting each on the last space
+// into given/family (crude but deterministic; repair is a later,
+// human-in-the-loop task) and tex.Encoding the result. It reports an
+// error when names is empty, so that a caller need not check separately.
+//
+// arXiv and Open Library both report names this way, which is why this is
+// exported: the resolve command builds an entry from an Open Library work
+// and must split those names by exactly the same rule, or the same book
+// would key differently depending on which service named it.
+func BibtexAuthors(names []string) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no authors")
 	}
 	parts := make([]string, len(names))
 	for i, n := range names {
-		family, given := splitArxivName(n)
+		family, given := splitNaturalName(n)
 		family = tex.Encode(family)
 		given = tex.Encode(given)
 		if given == "" {
@@ -336,10 +342,10 @@ func encodeArxivAuthors(names []string) (string, error) {
 	return strings.Join(parts, " and "), nil
 }
 
-// splitArxivName splits a natural-order plain-unicode name on its last
+// splitNaturalName splits a natural-order plain-unicode name on its last
 // space into family and given parts. A name with no space is taken to be
 // entirely a family name.
-func splitArxivName(name string) (family, given string) {
+func splitNaturalName(name string) (family, given string) {
 	i := strings.LastIndex(name, " ")
 	if i < 0 {
 		return name, ""

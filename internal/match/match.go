@@ -85,3 +85,49 @@ func TitleSimilarity(a, b string) float64 {
 
 	return float64(intersection) / float64(union)
 }
+
+// TitleCoverage reports how much of a title a free-text reference
+// carries: the fraction of the title's folded tokens that also occur in
+// text, in [0, 1]. An empty title scores 0.
+//
+// It is asymmetric on purpose, where TitleSimilarity is not. A reference
+// is typed as "Author, Title, year", so it holds words the title does
+// not, and those extra words must not count against the match the way a
+// Jaccard index would: "Applied Cryptography, Schneier, 1996" scores only
+// 0.5 against the title "Applied Cryptography" but covers all of it.
+//
+// A one-token title is the exception. It occurs inside far too many
+// references to mean anything on its own, so it scores 1 only when the
+// text is that same single token, and 0 otherwise.
+func TitleCoverage(title, text string) float64 {
+	titleTokens := Tokens(title)
+	if len(titleTokens) == 0 {
+		return 0
+	}
+
+	inText := make(map[string]bool)
+	for _, t := range Tokens(text) {
+		inText[t] = true
+	}
+
+	if len(titleTokens) == 1 {
+		if len(inText) == 1 && inText[titleTokens[0]] {
+			return 1
+		}
+		return 0
+	}
+
+	// Count the distinct title tokens the text carries: a word repeated
+	// in the title must not weigh more than one that is not.
+	distinct := make(map[string]bool)
+	for _, t := range titleTokens {
+		distinct[t] = true
+	}
+	found := 0
+	for t := range distinct {
+		if inText[t] {
+			found++
+		}
+	}
+	return float64(found) / float64(len(distinct))
+}
