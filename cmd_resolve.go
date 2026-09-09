@@ -102,6 +102,8 @@ func runResolve(args []string) (err error) {
 		email:  cfg.Email,
 		api:    &http.Client{Timeout: apiTimeout},
 		source: refKindSource(ref.Kind),
+		store:  s,
+		now:    time.Now(),
 	}
 
 	start := time.Now()
@@ -125,6 +127,8 @@ type resolver struct {
 	email  string
 	api    *http.Client
 	source string // the service that named the work, for the event log
+	store  *store.Store
+	now    time.Time
 }
 
 // crossref returns a Crossref client for this run.
@@ -162,6 +166,59 @@ func (r *resolver) run(ref sources.Ref) error {
 	}
 
 	reportResolved(p, pick, others, notes)
+	return r.recordOnHeldWork(p)
+}
+
+// recordOnHeldWork looks up the store entry the resolved reference already
+// names - by DOI or arXiv ID, then, failing that, by title and first
+// author surname - and records on it any identifier resolve found that it
+// lacked. The "store:" line is printed whenever a held entry is found,
+// even when nothing about it changes, so that the agent always learns
+// which entry the reference maps to.
+func (r *resolver) recordOnHeldWork(p *store.Paper) error {
+	var arxivID string
+	if p.Arxiv != nil {
+		arxivID = p.Arxiv.ID
+	}
+	key, err := findDuplicate(r.store, p.DOI, arxivID)
+	if err != nil {
+		return fmt.Errorf("resolve: %w", err)
+	}
+	if key == "" {
+		key, err = findByTitle(r.store, p.Bibtex.Fields["title"], firstSurname(p.Bibtex))
+		if err != nil {
+			return fmt.Errorf("resolve: %w", err)
+		}
+	}
+	if key == "" {
+		return nil
+	}
+
+	held, err := r.store.Load(key)
+	if err != nil {
+		return fmt.Errorf("resolve: %w", err)
+	}
+	fmt.Printf("%-8s %s\n", "store:", fmt.Sprintf("%s (holdings: %s)", held.Key, held.Holdings))
+
+	details, err := held.RecordIdentifiers(p.DOI, p.ISBN)
+	if err != nil {
+		fmt.Printf("conflict: %v\n", err)
+		return fmt.Errorf("resolve: %w", err)
+	}
+	if len(details) == 0 {
+		return nil
+	}
+
+	held.AppendLog(r.now, "resolve", strings.Join(details, "; "))
+	if err := r.store.Save(held); err != nil {
+		return fmt.Errorf("resolve: %w", err)
+	}
+	for _, d := range details {
+		fmt.Printf("recorded %s on %s\n", d, held.Key)
+	}
+	for _, problem := range store.CheckPaper(held) {
+		fmt.Printf("check: %s\n", problem.Msg)
+	}
 	return nil
 }
 

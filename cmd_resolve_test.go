@@ -22,6 +22,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"seehuhn.de/go/paper/internal/bibtex"
+	"seehuhn.de/go/paper/internal/store"
 )
 
 // crossrefPublishedSPDEResponse is the Crossref record for the published
@@ -334,5 +337,172 @@ func TestResolveOpenLibraryDownIsANote(t *testing.T) {
 	wantLine(t, out, "isbn", "9780521406499")
 	if !strings.Contains(out, "note:") || !strings.Contains(out, "open library") {
 		t.Errorf("a failed Open Library lookup must say so:\n%s", out)
+	}
+}
+
+// widgetsBibtex is the bibtex the crossrefBookWithISBNResponse fixture
+// resolves to, reused by the tests below to build a held entry that
+// findDuplicate or findByTitle can match against it.
+func widgetsBibtex() bibtex.Entry {
+	return bibtex.Entry{Type: "book", Fields: map[string]string{
+		"author": "Author, Ann", "title": "A Book About Widgets", "year": "1994"}}
+}
+
+// TestResolveRecordsMissingIdentifierOnHeldWork covers a held entry that
+// findDuplicate matches by DOI and that lacks an ISBN: resolve records the
+// ISBN Crossref supplied and logs it.
+func TestResolveRecordsMissingIdentifierOnHeldWork(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, crossrefBookWithISBNResponse), "", "", "", "", "",
+		openLibraryServer(t, `{"docs":[]}`))
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "published",
+		DOI: "10.1000/widgets", Bibtex: widgetsBibtex()}); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"10.1000/widgets"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLine(t, out, "store", "widgets_1994 (holdings: published)")
+	if !strings.Contains(out, "recorded isbn 9780521406499 on widgets_1994") {
+		t.Errorf("output does not say the ISBN was recorded:\n%s", out)
+	}
+
+	held, loadErr := s.Load("widgets_1994")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if held.ISBN != "9780521406499" {
+		t.Errorf("ISBN = %q, want 9780521406499", held.ISBN)
+	}
+	if len(held.Log) != 1 || held.Log[0].Action != "resolve" {
+		t.Errorf("log = %+v, want one resolve entry", held.Log)
+	}
+}
+
+// TestResolveMatchingIdentifierLeavesHeldWorkUnchanged covers a held entry
+// that already carries the DOI resolve found: nothing is written and
+// nothing is logged.
+func TestResolveMatchingIdentifierLeavesHeldWorkUnchanged(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, crossrefBookWithISBNResponse), "", "", "", "", "",
+		openLibraryServer(t, `{"docs":[]}`))
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "published",
+		DOI: "10.1000/widgets", ISBN: "9780521406499", Bibtex: widgetsBibtex()}); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"10.1000/widgets"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLine(t, out, "store", "widgets_1994 (holdings: published)")
+	if strings.Contains(out, "recorded") {
+		t.Errorf("nothing changed, so nothing should be reported as recorded:\n%s", out)
+	}
+
+	held, loadErr := s.Load("widgets_1994")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if len(held.Log) != 0 {
+		t.Errorf("log = %+v, want none", held.Log)
+	}
+}
+
+// TestResolveConflictingIdentifierFailsAndLeavesStoreUntouched covers a
+// held entry found by title whose DOI genuinely disagrees with the one
+// resolve found: resolve exits nonzero and writes nothing.
+func TestResolveConflictingIdentifierFailsAndLeavesStoreUntouched(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, crossrefBookWithISBNResponse), "", "", "", "", "",
+		openLibraryServer(t, `{"docs":[]}`))
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "published",
+		DOI: "10.9999/different", Bibtex: widgetsBibtex()}); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"10.1000/widgets"})
+	})
+	if err == nil {
+		t.Fatal("a conflicting DOI must fail resolve")
+	}
+	if !strings.Contains(out, "conflict:") {
+		t.Errorf("output does not report the conflict:\n%s", out)
+	}
+
+	held, loadErr := s.Load("widgets_1994")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if held.DOI != "10.9999/different" || held.ISBN != "" || len(held.Log) != 0 {
+		t.Errorf("held entry was modified: %+v", held)
+	}
+}
+
+// TestResolveFreeTextRecordsOnTitleMatch covers a held entry with no DOI,
+// found only by title and author surname: resolve records the ISBN it
+// found via Open Library.
+func TestResolveFreeTextRecordsOnTitleMatch(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, `{"message":{"items":[]}}`), "", "", "", "", "",
+		openLibraryServer(t, olResolveSearchFixture))
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "none",
+		Bibtex: widgetsBibtex()}); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"A", "Book", "About", "Widgets"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLine(t, out, "store", "widgets_1994 (holdings: none)")
+	if !strings.Contains(out, "recorded isbn 9780521006019 on widgets_1994") {
+		t.Errorf("output does not say the ISBN was recorded:\n%s", out)
+	}
+
+	held, loadErr := s.Load("widgets_1994")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if held.ISBN != "9780521006019" {
+		t.Errorf("ISBN = %q, want 9780521006019", held.ISBN)
+	}
+}
+
+// TestResolveNoMatchPrintsNoStoreLine covers an empty store: nothing
+// matches, so no "store:" line is printed.
+func TestResolveNoMatchPrintsNoStoreLine(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, crossrefWorkResponse), "", "", "", "", "", "")
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"10.1080/01621459.1963.10500830"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "store:") {
+		t.Errorf("nothing is held, so there should be no store: line:\n%s", out)
 	}
 }

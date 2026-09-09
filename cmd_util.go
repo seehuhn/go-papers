@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"seehuhn.de/go/paper/internal/config"
+	"seehuhn.de/go/paper/internal/match"
 	"seehuhn.de/go/paper/internal/resolve"
 	"seehuhn.de/go/paper/internal/sources"
 	"seehuhn.de/go/paper/internal/store"
@@ -59,6 +60,37 @@ func findDuplicate(s *store.Store, doi, arxivID string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// findByTitle returns the key of the single store entry whose title
+// clears ingestTitleMinScore against title and whose first author surname
+// (see firstSurname) equals surname case-insensitively, or "" when no
+// entry qualifies or more than one does. title and surname are compared
+// as they arrive - bibtex-encoded, the same convention matchStore uses -
+// so callers pass the resolved paper's own fields rather than decoded text.
+func findByTitle(s *store.Store, title, surname string) (string, error) {
+	if title == "" || surname == "" {
+		return "", nil
+	}
+	papers, err := s.LoadAll()
+	if err != nil {
+		return "", err
+	}
+	var key string
+	n := 0
+	for _, p := range papers {
+		if match.TitleSimilarity(title, p.Bibtex.Fields["title"]) < ingestTitleMinScore {
+			continue
+		}
+		if !strings.EqualFold(firstSurname(p.Bibtex), surname) {
+			continue
+		}
+		key, n = p.Key, n+1
+	}
+	if n != 1 {
+		return "", nil
+	}
+	return key, nil
 }
 
 // createDraft picks a free key for a freshly resolved draft entry, records

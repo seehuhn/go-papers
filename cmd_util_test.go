@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/config"
 	"seehuhn.de/go/paper/internal/store"
 )
@@ -130,5 +131,60 @@ func TestEventDetail(t *testing.T) {
 	long := strings.Repeat("x", eventDetailMax+50)
 	if got := eventDetail(errors.New(long)); len([]rune(got)) != eventDetailMax || !strings.HasSuffix(got, "…") {
 		t.Errorf("long message: got %d runes, suffix %q", len([]rune(got)), got[len(got)-3:])
+	}
+}
+
+// findByTitleFixture saves one held entry, "A Book About Widgets" by Ann
+// Author, that the findByTitle tests match against.
+func findByTitleFixture(t *testing.T) *store.Store {
+	t.Helper()
+	initStore(t, "test@example.org")
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "published",
+		Bibtex: bibtex.Entry{Type: "book", Fields: map[string]string{
+			"author": "Author, Ann", "title": "A Book About Widgets", "year": "1994"}}}); err != nil {
+		t.Fatalf("saving the fixture entry: %v", err)
+	}
+	return s
+}
+
+func TestFindByTitleMatchesOnTitleAndSurname(t *testing.T) {
+	s := findByTitleFixture(t)
+
+	key, err := findByTitle(s, "A Book About Widgets", "Author")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "widgets_1994" {
+		t.Errorf("key = %q, want widgets_1994", key)
+	}
+}
+
+func TestFindByTitleWrongSurnameNoMatch(t *testing.T) {
+	s := findByTitleFixture(t)
+
+	key, err := findByTitle(s, "A Book About Widgets", "Somebody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "" {
+		t.Errorf("key = %q, want no match", key)
+	}
+}
+
+func TestFindByTitleSeveralMatchesNoMatch(t *testing.T) {
+	s := findByTitleFixture(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1996", Status: "clean", Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "book", Fields: map[string]string{
+			"author": "Author, Ann", "title": "A Book About Widgets", "year": "1996"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := findByTitle(s, "A Book About Widgets", "Author")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "" {
+		t.Errorf("key = %q, want no match when several entries fit", key)
 	}
 }
