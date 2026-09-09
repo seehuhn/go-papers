@@ -329,14 +329,48 @@ func (in *ingester) ingestIntoOne(key string, f ingestFile) (int, error) {
 // both by -into ingestion and by the pickup, so the verify-then-move logic
 // is written once. A file that does not verify is left in place, reported
 // by intoMismatchError; the caller decides what to print on success.
+//
+// Once identity is verified, the file's DOI (when it carries one) is
+// reconciled onto the entry through RecordIdentifiers: an entry that
+// lacked a DOI gains the file's, and an arXiv-issued stand-in is upgraded
+// to the real one, either way with an "identifiers" log entry. A genuine
+// conflict - a non-arXiv DOI already on the entry that disagrees with the
+// file's - refuses the attach entirely, even though the title matched:
+// see doiConflictError.
 func (in *ingester) attach(p *store.Paper, key string, f ingestFile, doc *pdfid.DocText, id pdfid.ID) error {
 	p.Key = key
 	filename, ok := verifyInto(p, doc, id)
 	if !ok {
 		return intoMismatchError(p, f, doc, id)
 	}
+
+	if id.DOI != "" {
+		details, err := p.RecordIdentifiers(id.DOI, "")
+		if err != nil {
+			return doiConflictError(p, f, err)
+		}
+		for _, d := range details {
+			p.AppendLog(in.now, "identifiers", d)
+		}
+	}
+
 	_, err := attachFile(in.store, p, f.path, filename, f.source, in.now)
 	return err
+}
+
+// doiConflictError reports that a file's DOI genuinely disagrees with the
+// DOI already recorded on the entry it was to be attached to (err, from
+// RecordIdentifiers, names both). Unlike an arXiv-issued stand-in DOI,
+// which RecordIdentifiers upgrades in place, this is a real conflict: the
+// file is left where it is and nothing is written.
+func doiConflictError(p *store.Paper, f ingestFile, err error) error {
+	msg := fmt.Sprintf("%s does not look like %s: %v", f.displayName(), p.Key, err)
+	if f.downloaded() {
+		msg += "; nothing was attached"
+	} else {
+		msg += "; it was left in place"
+	}
+	return wrapOutcome("mismatch", errors.New(msg))
 }
 
 // verifyInto checks a file against the entry it is to be attached to and,

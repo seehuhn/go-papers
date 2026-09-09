@@ -65,6 +65,71 @@ func TestFromCrossref(t *testing.T) {
 	}
 }
 
+// crossrefBookWork returns a book-type Crossref work carrying an ISBN
+// list, the way Crossref reports it: hyphenated ISBN-10 alongside its
+// ISBN-13 equivalent.
+func crossrefBookWork() *sources.CrossrefWork {
+	return &sources.CrossrefWork{
+		DOI:       "10.1000/book-doi",
+		Type:      "book",
+		Titles:    []string{"A Book About Widgets"},
+		Authors:   []sources.CrossrefAuthor{{Family: "Author", Given: "Ann"}},
+		ISBN:      []string{"0-521-00601-5", "9780521006019"},
+		Published: sources.CrossrefDate{DateParts: [][]int{{1994}}},
+	}
+}
+
+// TestFromCrossrefBookISBN pins that a book-type work's first valid ISBN
+// is normalised onto both the top-level field and bibtex.fields.isbn.
+func TestFromCrossrefBookISBN(t *testing.T) {
+	p, err := FromCrossref(crossrefBookWork())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ISBN != "9780521006019" {
+		t.Errorf("ISBN = %q, want normalised 9780521006019", p.ISBN)
+	}
+	if p.Bibtex.Fields["isbn"] != "9780521006019" {
+		t.Errorf("bibtex.fields.isbn = %q, want normalised 9780521006019", p.Bibtex.Fields["isbn"])
+	}
+	if p.Bibtex.Type != "book" {
+		t.Errorf("type = %q, want book", p.Bibtex.Type)
+	}
+}
+
+// TestFromCrossrefBookSkipsInvalidISBN pins that an unparseable ISBN
+// entry is skipped in favour of the next one that validates.
+func TestFromCrossrefBookSkipsInvalidISBN(t *testing.T) {
+	w := crossrefBookWork()
+	w.ISBN = []string{"not-an-isbn", "9780521006019"}
+	p, err := FromCrossref(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ISBN != "9780521006019" {
+		t.Errorf("ISBN = %q, want the first valid entry, normalised", p.ISBN)
+	}
+}
+
+// TestFromCrossrefNonBookLeavesBibtexISBNUnset pins that a non-book work
+// with an ISBN in the Crossref record (e.g. a proceedings article citing
+// its volume's ISBN) still records the top-level ISBN, but does not set
+// bibtex.fields.isbn: that promotion is reserved for book-type works.
+func TestFromCrossrefNonBookLeavesBibtexISBNUnset(t *testing.T) {
+	w := hoeffdingWork()
+	w.ISBN = []string{"9780521006019"}
+	p, err := FromCrossref(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ISBN != "9780521006019" {
+		t.Errorf("ISBN = %q, want 9780521006019", p.ISBN)
+	}
+	if _, ok := p.Bibtex.Fields["isbn"]; ok {
+		t.Errorf("bibtex.fields.isbn = %q, want unset for a non-book work", p.Bibtex.Fields["isbn"])
+	}
+}
+
 func TestFromCrossrefEncodesAuthors(t *testing.T) {
 	w := hoeffdingWork()
 	w.Authors = []sources.CrossrefAuthor{{Family: "Voß", Given: "Jochen"}}
@@ -223,5 +288,54 @@ func TestMerge(t *testing.T) {
 	}
 	if m.Arxiv == nil || m.Abstract == "" {
 		t.Error("merge must carry the arXiv ref and abstract")
+	}
+}
+
+// TestMergeKeepsPublishedDOIOnConflict pins that the published record's
+// DOI is authoritative: even when the arXiv entry names a different DOI,
+// the merge keeps published.DOI untouched (RecordIdentifiers refuses to
+// write on a genuine conflict, so the published value survives).
+func TestMergeKeepsPublishedDOIOnConflict(t *testing.T) {
+	pub, err := FromCrossref(hoeffdingWork())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := arxivEntry()
+	e.DOI = "10.9999/does-not-match"
+	m := Merge(pub, e)
+	if m.DOI != pub.DOI {
+		t.Errorf("DOI = %q, want the published DOI %q kept", m.DOI, pub.DOI)
+	}
+}
+
+// TestMergeFillsMissingDOIFromArxiv pins that when the published record
+// itself carries no DOI, the arXiv entry's DOI (the one that led to the
+// published record in the first place) is recorded.
+func TestMergeFillsMissingDOIFromArxiv(t *testing.T) {
+	w := hoeffdingWork()
+	w.DOI = ""
+	pub, err := FromCrossref(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := arxivEntry()
+	e.DOI = "10.1080/01621459.1963.10500830"
+	m := Merge(pub, e)
+	if m.DOI != e.DOI {
+		t.Errorf("DOI = %q, want %q filled in from the arXiv entry", m.DOI, e.DOI)
+	}
+}
+
+// TestMergeKeepsPublishedISBN pins that a book's ISBN survives the
+// merge unchanged: an arXiv preprint carries no ISBN of its own to
+// contribute or conflict with.
+func TestMergeKeepsPublishedISBN(t *testing.T) {
+	pub, err := FromCrossref(crossrefBookWork())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Merge(pub, arxivEntry())
+	if m.ISBN != pub.ISBN {
+		t.Errorf("ISBN = %q, want the published ISBN %q kept", m.ISBN, pub.ISBN)
 	}
 }

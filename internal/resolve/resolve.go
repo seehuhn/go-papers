@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"seehuhn.de/go/paper/internal/bibtex"
+	"seehuhn.de/go/paper/internal/isbn"
 	"seehuhn.de/go/paper/internal/pdfid"
 	"seehuhn.de/go/paper/internal/sources"
 	"seehuhn.de/go/paper/internal/store"
@@ -110,17 +111,35 @@ func FromCrossref(w *sources.CrossrefWork) (*store.Paper, error) {
 		fields["doi"] = w.DOI
 	}
 
+	bibtexType := crossrefType(w.Type)
+	workISBN := firstValidISBN(w.ISBN)
+	if workISBN != "" && bibtexType == "book" {
+		fields["isbn"] = workISBN
+	}
+
 	return &store.Paper{
 		Key:      key,
 		Status:   "draft",
 		Pending:  pendingMsg,
 		Holdings: "none",
 		DOI:      w.DOI,
+		ISBN:     workISBN,
 		Bibtex: bibtex.Entry{
-			Type:   crossrefType(w.Type),
+			Type:   bibtexType,
 			Fields: fields,
 		},
 	}, nil
+}
+
+// firstValidISBN returns the first entry of candidates that isbn.Valid
+// accepts, normalised, or "" when none does.
+func firstValidISBN(candidates []string) string {
+	for _, c := range candidates {
+		if norm, err := isbn.Normalize(c); err == nil {
+			return norm
+		}
+	}
+	return ""
 }
 
 // FillFromPrism fills the gaps in an already-resolved draft entry from
@@ -223,6 +242,15 @@ func FromArxiv(e *sources.ArxivEntry) (*store.Paper, error) {
 // primaryclass, abstract, arxiv ref) onto a Crossref-derived paper: the
 // published metadata is the entry, per the spec's best-version rule. As
 // in FromArxiv, the eprint field is the bare ID.
+//
+// The published record is authoritative for identifiers: the result
+// keeps published.DOI, filled in from e.DOI only when published carried
+// none. RecordIdentifiers writes nothing on a genuine conflict, so a
+// mismatched e.DOI (which should not happen - e.DOI is what led to
+// published in the first place) leaves published.DOI untouched rather
+// than erroring; Merge has no error return to report one. published.ISBN
+// likewise survives unchanged: an arXiv preprint carries no ISBN of its
+// own to contribute.
 func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 	m := *published
 
@@ -239,6 +267,8 @@ func Merge(published *store.Paper, e *sources.ArxivEntry) *store.Paper {
 
 	m.Arxiv = &store.ArxivRef{ID: e.ID, Version: e.Version}
 	m.Abstract = e.Abstract
+
+	_, _ = m.RecordIdentifiers(e.DOI, "")
 
 	return &m
 }

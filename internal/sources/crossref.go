@@ -59,6 +59,7 @@ type CrossrefWork struct {
 	Issue          string           `json:"issue"`
 	Page           string           `json:"page"`
 	ISSN           []string         `json:"ISSN"`
+	ISBN           []string         `json:"ISBN"`
 	Publisher      string           `json:"publisher"`
 	Score          float64          `json:"score"` // only on search results
 	Published      CrossrefDate     `json:"published"`

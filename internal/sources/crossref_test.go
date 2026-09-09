@@ -86,6 +86,33 @@ func TestCrossrefWork(t *testing.T) {
 	}
 }
 
+// crossrefBookFixture is a book work record, carrying an ISBN list the
+// way Crossref reports it.
+const crossrefBookFixture = `{"status":"ok","message-type":"work","message":{
+  "DOI":"10.1000/book-doi","type":"book",
+  "title":["A Book About Widgets"],
+  "author":[{"given":"Ann","family":"Author"}],
+  "ISBN":["0-521-00601-5","9780521006019"],
+  "published":{"date-parts":[[1994]]}}}`
+
+func TestCrossrefWorkISBN(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/works/", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, crossrefBookFixture)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := &Crossref{BaseURL: srv.URL, Client: srv.Client()}
+
+	w, err := c.Work("10.1000/book-doi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.ISBN) != 2 || w.ISBN[0] != "0-521-00601-5" || w.ISBN[1] != "9780521006019" {
+		t.Errorf("ISBN = %+v", w.ISBN)
+	}
+}
+
 // crossrefOrgAuthorFixture is a mixed author array, as seen on the LIGO
 // gravitational-wave discovery paper (10.1103/PhysRevLett.116.061102):
 // ordinary {family,given} entries alongside a collective-author entry

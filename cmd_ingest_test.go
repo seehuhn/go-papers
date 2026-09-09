@@ -146,6 +146,72 @@ func TestIngestIntoVerifiesIdentity(t *testing.T) {
 	assertUntouched(t, s, "hoeffding_1963")
 }
 
+// TestIngestIntoRecordsMissingDOI pins that a file's DOI is recorded onto
+// an entry that lacks one: the file is verified by title (the entry has
+// no DOI to compare against), and the attach must not merely succeed but
+// also record the DOI it found, with a log entry saying so.
+func TestIngestIntoRecordsMissingDOI(t *testing.T) {
+	fetchFixtureStore(t)
+	guardBases(t)
+	s := openConfiguredStore(t)
+	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Hoeffding, Wassily",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"journal": "JASA", "year": "1963"}}})
+	f := filepath.Join(t.TempDir(), "hoeffding.pdf")
+	makeIngestPDF(t, f, "Probability inequalities for sums of bounded random variables",
+		"10.1080/01621459.1963.10500830")
+
+	if err := runIngest([]string{"-into", "hoeffding_1963", f}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := loadEntry(t, s.Root, "hoeffding_1963")
+	if p.DOI != "10.1080/01621459.1963.10500830" {
+		t.Errorf("DOI = %q, want the file's DOI recorded", p.DOI)
+	}
+	found := false
+	for _, l := range p.Log {
+		if l.Action == "identifiers" && strings.Contains(l.Detail, "10.1080/01621459.1963.10500830") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("log = %+v, want an identifiers entry naming the recorded DOI", p.Log)
+	}
+}
+
+// TestIngestIntoDOIConflictRefusesAttach pins that a file whose DOI
+// genuinely disagrees with the entry's already-recorded (non-arXiv) DOI
+// is refused, even though its title matches: a real identifier conflict
+// must not be silently attached on title agreement alone.
+func TestIngestIntoDOIConflictRefusesAttach(t *testing.T) {
+	fetchFixtureStore(t)
+	guardBases(t)
+	s := openConfiguredStore(t)
+	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
+		DOI: "10.1080/01621459.1963.10500830",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Hoeffding, Wassily",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"journal": "JASA", "year": "1963"}}})
+	f := filepath.Join(t.TempDir(), "hoeffding.pdf")
+	makeIngestPDF(t, f, "Probability inequalities for sums of bounded random variables",
+		"10.9999/conflicting-doi")
+
+	err := runIngest([]string{"-into", "hoeffding_1963", f})
+	if err == nil ||
+		!strings.Contains(err.Error(), "10.9999/conflicting-doi") ||
+		!strings.Contains(err.Error(), "10.1080/01621459.1963.10500830") {
+		t.Errorf("conflicting DOI must error naming both, got %v", err)
+	}
+	if _, statErr := os.Stat(f); statErr != nil {
+		t.Error("rejected file must be left in place")
+	}
+	assertUntouched(t, s, "hoeffding_1963")
+}
+
 func TestIngestBatchCreatesEntries(t *testing.T) {
 	storeDir := fetchFixtureStore(t)
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
