@@ -145,12 +145,13 @@ func mkEdition(isbn string, year int, format, editionName string) OLEdition {
 
 func TestPickEdition(t *testing.T) {
 	tests := []struct {
-		name     string
-		editions []OLEdition
-		edition  string
-		year     int
-		wantISBN string
-		wantOK   bool
+		name       string
+		editions   []OLEdition
+		edition    string
+		year       int
+		wantISBN   string
+		wantOthers []string // others' ISBNs, in the expected ranked order
+		wantOK     bool
 	}{
 		{
 			name:     "no editions",
@@ -169,8 +170,9 @@ func TestPickEdition(t *testing.T) {
 			editions: []OLEdition{
 				mkEdition("9780000000002", 2000, "hardcover", ""),
 			},
-			wantISBN: "9780000000002",
-			wantOK:   true,
+			wantISBN:   "9780000000002",
+			wantOthers: []string{},
+			wantOK:     true,
 		},
 		{
 			name: "edition-name ordinal digit tie-break",
@@ -178,10 +180,11 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000011", 2000, "paperback", "1st ed."),
 				mkEdition("9780000000022", 2000, "paperback", "2nd ed."),
 			},
-			edition:  "2nd",
-			year:     2000,
-			wantISBN: "9780000000022",
-			wantOK:   true,
+			edition:    "2nd",
+			year:       2000,
+			wantISBN:   "9780000000022",
+			wantOthers: []string{"9780000000011"},
+			wantOK:     true,
 		},
 		{
 			name: "year tie-break",
@@ -189,9 +192,10 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000011", 1999, "paperback", ""),
 				mkEdition("9780000000022", 2005, "paperback", ""),
 			},
-			year:     2005,
-			wantISBN: "9780000000022",
-			wantOK:   true,
+			year:       2005,
+			wantISBN:   "9780000000022",
+			wantOthers: []string{"9780000000011"},
+			wantOK:     true,
 		},
 		{
 			name: "format tie-break: hardcover beats paperback beats other beats e-book",
@@ -201,8 +205,9 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000033", 2000, "paperback", ""),
 				mkEdition("9780000000044", 2000, "hardcover", ""),
 			},
-			wantISBN: "9780000000044",
-			wantOK:   true,
+			wantISBN:   "9780000000044",
+			wantOthers: []string{"9780000000033", "9780000000022", "9780000000011"},
+			wantOK:     true,
 		},
 		{
 			name: "format tie-break: other/unknown beats e-book variants",
@@ -211,8 +216,9 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000022", 2000, "kindle", ""),
 				mkEdition("9780000000033", 2000, "microform", ""),
 			},
-			wantISBN: "9780000000033",
-			wantOK:   true,
+			wantISBN:   "9780000000033",
+			wantOthers: []string{"9780000000011", "9780000000022"},
+			wantOK:     true,
 		},
 		{
 			name: "earliest year tie-break",
@@ -221,8 +227,9 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000022", 1990, "hardcover", ""),
 				mkEdition("9780000000033", 2000, "hardcover", ""),
 			},
-			wantISBN: "9780000000022",
-			wantOK:   true,
+			wantISBN:   "9780000000022",
+			wantOthers: []string{"9780000000033", "9780000000011"},
+			wantOK:     true,
 		},
 		{
 			name: "smallest ISBN tie-break",
@@ -231,8 +238,9 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000011", 2000, "hardcover", ""),
 				mkEdition("9780000000022", 2000, "hardcover", ""),
 			},
-			wantISBN: "9780000000011",
-			wantOK:   true,
+			wantISBN:   "9780000000011",
+			wantOthers: []string{"9780000000022", "9780000000033"},
+			wantOK:     true,
 		},
 		{
 			name: "unknown edition/year are no-ops, format still decides",
@@ -240,8 +248,25 @@ func TestPickEdition(t *testing.T) {
 				mkEdition("9780000000011", 1980, "paperback", "3rd ed."),
 				mkEdition("9780000000022", 2020, "hardcover", "1st ed."),
 			},
-			wantISBN: "9780000000022",
-			wantOK:   true,
+			wantISBN:   "9780000000022",
+			wantOthers: []string{"9780000000011"},
+			wantOK:     true,
+		},
+		{
+			// Input order deliberately differs from ranked order, and a
+			// no-ISBN edition sits between qualifying ones: others must
+			// come back ranked (next-best first), not in leftover input
+			// order, and the no-ISBN edition must not appear at all.
+			name: "others follow ranked order and exclude no-ISBN editions",
+			editions: []OLEdition{
+				mkEdition("9780000000020", 2000, "paperback", ""),
+				{Key: "/books/OLxM", ISBN: "", Format: "hardcover", Year: 1970},
+				mkEdition("9780000000030", 2005, "hardcover", ""),
+				mkEdition("9780000000010", 1990, "hardcover", ""),
+			},
+			wantISBN:   "9780000000010",
+			wantOthers: []string{"9780000000030", "9780000000020"},
+			wantOK:     true,
 		},
 	}
 
@@ -257,12 +282,17 @@ func TestPickEdition(t *testing.T) {
 			if pick.ISBN != tc.wantISBN {
 				t.Errorf("pick.ISBN = %q, want %q", pick.ISBN, tc.wantISBN)
 			}
-			if len(others)+1 != len(tc.editions) {
-				t.Errorf("len(others) = %d, want %d", len(others), len(tc.editions)-1)
+			gotOthers := make([]string, len(others))
+			for i, o := range others {
+				gotOthers[i] = o.ISBN
 			}
-			for _, o := range others {
-				if o.ISBN == pick.ISBN && o.Key == pick.Key {
-					t.Errorf("others contains the pick: %+v", o)
+			if len(gotOthers) != len(tc.wantOthers) {
+				t.Fatalf("others ISBNs = %v, want %v", gotOthers, tc.wantOthers)
+			}
+			for i := range gotOthers {
+				if gotOthers[i] != tc.wantOthers[i] {
+					t.Errorf("others ISBNs = %v, want %v", gotOthers, tc.wantOthers)
+					break
 				}
 			}
 		})

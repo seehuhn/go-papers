@@ -17,11 +17,11 @@
 package sources
 
 import (
-	"cmp"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -205,85 +205,63 @@ func formatRank(format string) int {
 	}
 }
 
-// filterMin narrows candidates (indices into editions) to those whose key
-// achieves the minimum value of key, preserving order. A candidates slice
-// of length <= 1 is returned unchanged.
-func filterMin[T cmp.Ordered](candidates []int, key func(int) T) []int {
-	if len(candidates) <= 1 {
-		return candidates
-	}
-	best := key(candidates[0])
-	for _, i := range candidates[1:] {
-		if k := key(i); k < best {
-			best = k
-		}
-	}
-	out := make([]int, 0, len(candidates))
-	for _, i := range candidates {
-		if key(i) == best {
-			out = append(out, i)
-		}
-	}
-	return out
-}
-
 // PickEdition chooses the edition to record for a work described by bibtex
-// edition text (e.g. "2nd", "") and year (0 unknown): only editions with an
-// ISBN qualify; prefer editions whose EditionName contains the same ordinal
-// digit as edition; then Year == year; then Format hardcover > paperback >
-// other/unknown > e-book ("electronic resource", "ebook", "kindle"); then
-// the earliest Year; then the smallest ISBN. Returns the pick and the rest
-// in that order; ok is false when nothing qualifies.
+// edition text (e.g. "2nd", "") and year (0 unknown). Only editions with an
+// ISBN qualify; editions without one are dropped entirely, from both pick
+// and others. Qualifying editions are ranked by: whether EditionName
+// contains the same ordinal digit as edition; then Year == year; then
+// Format hardcover > paperback > other/unknown > e-book ("electronic
+// resource", "ebook", "kindle"); then the earliest Year; then the smallest
+// ISBN. pick is the best-ranked edition; others are the rest in that same
+// ranked order (next-best first), so a caller can print them as ranked
+// alternatives. ok is false when nothing qualifies.
 func PickEdition(editions []OLEdition, edition string, year int) (pick OLEdition, others []OLEdition, ok bool) {
-	var candidates []int
-	for i, e := range editions {
+	var qualifying []OLEdition
+	for _, e := range editions {
 		if e.ISBN != "" {
-			candidates = append(candidates, i)
+			qualifying = append(qualifying, e)
 		}
 	}
-	if len(candidates) == 0 {
+	if len(qualifying) == 0 {
 		return OLEdition{}, nil, false
 	}
 
 	digit := ordinalDigit(edition)
-	candidates = filterMin(candidates, func(i int) int {
-		// strings.Contains(s, "") is always true, so an empty digit (no
-		// ordinal in edition) makes this tier a no-op.
-		if strings.Contains(editions[i].EditionName, digit) {
+	// digitScore ranks EditionName containing digit above those that
+	// don't. strings.Contains(s, "") is always true, so an empty digit (no
+	// ordinal in edition) makes this tier a no-op: every edition scores 0.
+	digitScore := func(e OLEdition) int {
+		if strings.Contains(e.EditionName, digit) {
 			return 0
 		}
 		return 1
-	})
-
-	if year != 0 {
-		candidates = filterMin(candidates, func(i int) int {
-			if editions[i].Year == year {
-				return 0
-			}
-			return 1
-		})
 	}
-
-	candidates = filterMin(candidates, func(i int) int {
-		return formatRank(editions[i].Format)
-	})
-
-	candidates = filterMin(candidates, func(i int) int {
-		return editions[i].Year
-	})
-
-	candidates = filterMin(candidates, func(i int) string {
-		return editions[i].ISBN
-	})
-
-	pickIdx := candidates[0]
-	pick = editions[pickIdx]
-	others = make([]OLEdition, 0, len(editions)-1)
-	for i, e := range editions {
-		if i == pickIdx {
-			continue
+	// yearScore ranks Year == year above the rest, but only when year is
+	// known; year == 0 makes this tier a no-op so an unknown target year
+	// never favours editions whose own year failed to parse.
+	yearScore := func(e OLEdition) int {
+		if year == 0 || e.Year == year {
+			return 0
 		}
-		others = append(others, e)
+		return 1
 	}
-	return pick, others, true
+
+	sort.SliceStable(qualifying, func(i, j int) bool {
+		a, b := qualifying[i], qualifying[j]
+		if da, db := digitScore(a), digitScore(b); da != db {
+			return da < db
+		}
+		if ya, yb := yearScore(a), yearScore(b); ya != yb {
+			return ya < yb
+		}
+		if fa, fb := formatRank(a.Format), formatRank(b.Format); fa != fb {
+			return fa < fb
+		}
+		if a.Year != b.Year {
+			return a.Year < b.Year
+		}
+		return a.ISBN < b.ISBN
+	})
+
+	return qualifying[0], qualifying[1:], true
 }
