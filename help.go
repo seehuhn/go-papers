@@ -62,6 +62,13 @@ entry, not just that field. Fields:
     audit     {"claims": [...]}, see below
     log       acquisition and correction history: append, never rewrite
 
+Identifiers are kept: doi and isbn, once verified, are never deleted
+or replaced by hand; a bibtex doi or isbn field is promoted to the
+top-level field, which "paper bib" exports over the bibtex field; a
+wrong identifier is corrected only together with a log line saying
+why. "paper resolve" records identifiers it finds on entries that
+lack them.
+
 The bibtex-encoding rule: values inside bibtex.fields are stored
 already bibtex-encoded, exactly as they will be exported - LaTeX
 escapes and all:
