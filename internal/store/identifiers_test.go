@@ -19,6 +19,8 @@ package store
 import (
 	"strings"
 	"testing"
+
+	"seehuhn.de/go/paper/internal/bibtex"
 )
 
 func TestIsArxivDOI(t *testing.T) {
@@ -200,5 +202,83 @@ func TestRecordIdentifiersBothMissing(t *testing.T) {
 	}
 	if len(details) != 2 {
 		t.Errorf("details = %v, want two entries", details)
+	}
+}
+
+// TestRecordIdentifiersBibtexDOI covers a legacy entry that carries its
+// DOI only in bibtex.fields.doi: a matching DOI is promoted to the
+// top-level field, a contradicting one is refused rather than written
+// alongside the field it disagrees with.
+func TestRecordIdentifiersBibtexDOI(t *testing.T) {
+	cases := []struct {
+		name      string
+		fieldDOI  string
+		doi       string
+		wantDOI   string
+		wantError bool
+	}{
+		{"match promotes", "10.1/A", "10.1/a", "10.1/a", false},
+		{"mismatch errors", "10.1/a", "10.1/b", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := &Paper{Bibtex: bibtex.Entry{Type: "article",
+				Fields: map[string]string{"doi": c.fieldDOI}}}
+			details, err := p.RecordIdentifiers(c.doi, "")
+			if (err != nil) != c.wantError {
+				t.Fatalf("error = %v, want error = %v", err, c.wantError)
+			}
+			if c.wantError {
+				if !strings.Contains(err.Error(), c.fieldDOI) || !strings.Contains(err.Error(), c.doi) {
+					t.Errorf("error = %v, want it to name both DOIs", err)
+				}
+				if details != nil {
+					t.Errorf("details = %v, want none on error", details)
+				}
+			} else if len(details) != 1 || !strings.Contains(details[0], "recorded doi ") {
+				t.Errorf("details = %v, want one \"recorded doi\" entry", details)
+			}
+			if p.DOI != c.wantDOI {
+				t.Errorf("DOI = %q, want %q", p.DOI, c.wantDOI)
+			}
+		})
+	}
+}
+
+// TestRecordIdentifiersBibtexISBN is the ISBN half of the same rule, with
+// the two forms of the same ISBN counting as a match.
+func TestRecordIdentifiersBibtexISBN(t *testing.T) {
+	cases := []struct {
+		name      string
+		fieldISBN string
+		isbn      string
+		wantISBN  string
+		wantError bool
+	}{
+		{"match promotes", "0-521-00601-5", "9780521006019", "9780521006019", false},
+		{"mismatch errors", "9780521006019", "080442957X", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := &Paper{Bibtex: bibtex.Entry{Type: "book",
+				Fields: map[string]string{"isbn": c.fieldISBN}}}
+			details, err := p.RecordIdentifiers("", c.isbn)
+			if (err != nil) != c.wantError {
+				t.Fatalf("error = %v, want error = %v", err, c.wantError)
+			}
+			if c.wantError {
+				if !strings.Contains(err.Error(), c.fieldISBN) || !strings.Contains(err.Error(), c.isbn) {
+					t.Errorf("error = %v, want it to name both ISBNs", err)
+				}
+				if details != nil {
+					t.Errorf("details = %v, want none on error", details)
+				}
+			} else if len(details) != 1 || !strings.Contains(details[0], "recorded isbn ") {
+				t.Errorf("details = %v, want one \"recorded isbn\" entry", details)
+			}
+			if p.ISBN != c.wantISBN {
+				t.Errorf("ISBN = %q, want %q", p.ISBN, c.wantISBN)
+			}
+		})
 	}
 }

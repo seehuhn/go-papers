@@ -29,11 +29,6 @@ import (
 	"seehuhn.de/go/paper/internal/store"
 )
 
-// titleBar is the similarity a title match must clear. It is deliberately
-// higher than the 0.8 the pile ingest used: 5 shared tokens out of 6 scores
-// 0.833, which is how Giles's paper was filed as Giles & Waterhouse's.
-const titleBar = 0.9
-
 // matchStore finds the store entry a bib entry refers to, by DOI, then
 // arXiv ID, then title. Returns nil when the store holds no match.
 func matchStore(papers []*store.Paper, e bibtex.KeyedEntry) *store.Paper {

@@ -174,7 +174,9 @@ at all. Open Library failing to answer is reported as a `note:` line, so
 that a service being down is never read as a book having no ISBN.
 
 When the store already holds the work, resolve names the entry and its
-holdings, and records on it any identifier it was missing.
+holdings, and records on it any identifier it was missing. An identifier
+that contradicts one the entry already holds is reported as `conflict:`
+and resolve exits nonzero without writing.
 
 ```bash
 $ paper resolve 10.1017/CBO9781139344203

@@ -212,6 +212,37 @@ func TestIngestIntoDOIConflictRefusesAttach(t *testing.T) {
 	assertUntouched(t, s, "hoeffding_1963")
 }
 
+// TestIngestIntoBibtexDOIConflictRefusesAttach is the legacy-entry half
+// of the same rule: the entry records its DOI only in bibtex.fields.doi,
+// with the top-level field still empty. A file carrying a different DOI
+// must be refused there too, rather than promoted into a top-level DOI
+// that contradicts the bibtex field.
+func TestIngestIntoBibtexDOIConflictRefusesAttach(t *testing.T) {
+	fetchFixtureStore(t)
+	guardBases(t)
+	s := openConfiguredStore(t)
+	s.Save(&store.Paper{Key: "hoeffding_1963", Status: "clean", Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author":  "Hoeffding, Wassily",
+			"title":   "Probability inequalities for sums of bounded random variables",
+			"journal": "JASA", "year": "1963",
+			"doi": "10.1080/01621459.1963.10500830"}}})
+	f := filepath.Join(t.TempDir(), "hoeffding.pdf")
+	makeIngestPDF(t, f, "Probability inequalities for sums of bounded random variables",
+		"10.9999/conflicting-doi")
+
+	err := runIngest([]string{"-into", "hoeffding_1963", f})
+	if err == nil ||
+		!strings.Contains(err.Error(), "10.9999/conflicting-doi") ||
+		!strings.Contains(err.Error(), "10.1080/01621459.1963.10500830") {
+		t.Errorf("conflicting DOI must error naming both, got %v", err)
+	}
+	if _, statErr := os.Stat(f); statErr != nil {
+		t.Error("rejected file must be left in place")
+	}
+	assertUntouched(t, s, "hoeffding_1963")
+}
+
 func TestIngestBatchCreatesEntries(t *testing.T) {
 	storeDir := fetchFixtureStore(t)
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -789,6 +820,53 @@ func TestPickupAttachFailureReportsFailed(t *testing.T) {
 	}
 	if _, statErr := os.Stat(pdf); statErr != nil {
 		t.Error("file must be left in place when the move fails")
+	}
+}
+
+// TestPickupDOIConflictLogsMismatch pins the other way an attach can fail
+// after verification succeeded: the candidate's title matches the entry,
+// but the DOI it carries contradicts the entry's. That is a question of
+// what the file is, so the event outcome must be "mismatch", as it is on
+// the -into path, and not the generic "error" a failed move gets.
+func TestPickupDOIConflictLogsMismatch(t *testing.T) {
+	crossref := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work-list","message":{"items":[]}}`)
+	}))
+	t.Cleanup(crossref.Close)
+	overrideBases(t, crossref.URL, "", "", "", "", confirmingHandleServer(t), "")
+	root, dl, _, _ := pickupFixture(t)
+
+	writeAwaiting(t, root, "smith_2020", "A study of widgets", "2026-09-01T10:00:00")
+	s, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := loadEntry(t, root, "smith_2020")
+	held.DOI = "10.1080/01621459.1963.10500830"
+	if err := s.Save(held); err != nil {
+		t.Fatal(err)
+	}
+	pdf := filepath.Join(dl, "download.pdf")
+	makeIngestPDF(t, pdf, "A study of widgets", "10.9999/conflicting-doi")
+	now := time.Now()
+	if err := os.Chtimes(pdf, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var runErr error
+	out := captureStdout(t, func() { runErr = runIngest(nil) })
+	if runErr == nil {
+		t.Fatal("expected an error: the DOI conflict must refuse the attach")
+	}
+	if !strings.Contains(out, "failed: "+pdf+" -> smith_2020") {
+		t.Fatalf("report: %s", out)
+	}
+	if _, statErr := os.Stat(pdf); statErr != nil {
+		t.Error("file must be left in place when its DOI conflicts")
+	}
+	log := readEventLog(t, root)
+	if !strings.Contains(log, `"outcome":"mismatch"`) {
+		t.Errorf("event outcome is not mismatch; log: %q", log)
 	}
 }
 

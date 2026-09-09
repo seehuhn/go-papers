@@ -41,6 +41,13 @@ func IsArxivDOI(d string) bool {
 // mismatch is an error naming both values and nothing is written. ISBNs
 // are stored normalised.
 //
+// A legacy entry may hold an identifier only in bibtex.fields.doi or
+// bibtex.fields.isbn, with the top-level field still empty. That field
+// counts as already recorded: an argument agreeing with it is promoted to
+// the top level as a normal recording, and one contradicting it is the
+// same error as a contradicted top-level value. Without this an entry
+// could end up holding two different DOIs, one in each place.
+//
 // It returns one log detail per change ("recorded doi 10.…", "replaced
 // arXiv DOI 10.48550/… by 10.…", "recorded isbn 978…"); the caller
 // appends the LogEntry with its own timestamp and action.
@@ -49,7 +56,10 @@ func (p *Paper) RecordIdentifiers(doi, isbn string) ([]string, error) {
 
 	newDOI := p.DOI
 	if doi != "" {
+		fieldDOI := strings.TrimSpace(p.Bibtex.Fields["doi"])
 		switch {
+		case p.DOI == "" && fieldDOI != "" && !strings.EqualFold(fieldDOI, doi):
+			return nil, fmt.Errorf("doi: %s does not match already-recorded doi %s", doi, fieldDOI)
 		case p.DOI == "":
 			newDOI = doi
 			details = append(details, fmt.Sprintf("recorded doi %s", doi))
@@ -69,7 +79,10 @@ func (p *Paper) RecordIdentifiers(doi, isbn string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("isbn: %q is not a valid ISBN-10 or ISBN-13 (checksum or length)", isbn)
 		}
+		fieldISBN := strings.TrimSpace(p.Bibtex.Fields["isbn"])
 		switch {
+		case p.ISBN == "" && fieldISBN != "" && !isbnlib.Equal(fieldISBN, isbn):
+			return nil, fmt.Errorf("isbn: %s does not match already-recorded isbn %s", isbn, fieldISBN)
 		case p.ISBN == "":
 			newISBN = norm
 			details = append(details, fmt.Sprintf("recorded isbn %s", norm))

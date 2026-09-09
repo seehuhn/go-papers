@@ -62,10 +62,16 @@ func findDuplicate(s *store.Store, doi, arxivID string) (string, error) {
 	return "", nil
 }
 
+// titleBar is the similarity a title match must clear. It is deliberately
+// higher than the 0.8 the pile ingest used: 5 shared tokens out of 6 scores
+// 0.833, which is how Giles's paper was filed as Giles & Waterhouse's.
+// Both findByTitle below and the audit's matchStore use it.
+const titleBar = 0.9
+
 // findByTitle returns the key of the single store entry whose title
-// clears ingestTitleMinScore against title and whose first author surname
-// (see firstSurname) equals surname case-insensitively, or "" when no
-// entry qualifies or more than one does. title and surname are compared
+// clears titleBar against title and whose first author surname (see
+// firstSurname) equals surname case-insensitively, or "" when no entry
+// qualifies or more than one does. title and surname are compared
 // as they arrive - bibtex-encoded, the same convention matchStore uses -
 // so callers pass the resolved paper's own fields rather than decoded text.
 func findByTitle(s *store.Store, title, surname string) (string, error) {
@@ -79,7 +85,7 @@ func findByTitle(s *store.Store, title, surname string) (string, error) {
 	var key string
 	n := 0
 	for _, p := range papers {
-		if match.TitleSimilarity(title, p.Bibtex.Fields["title"]) < ingestTitleMinScore {
+		if match.TitleSimilarity(title, p.Bibtex.Fields["title"]) < titleBar {
 			continue
 		}
 		if !strings.EqualFold(firstSurname(p.Bibtex), surname) {
@@ -186,18 +192,23 @@ func eventDetail(err error) string {
 // preprint onto the preprint's draft entry: the published metadata is the
 // entry, per the spec's best-version rule. A Crossref failure is not
 // fatal — the arXiv-only entry is still useful — but it must be visible in
-// Pending, so the preprint draft is returned with a note instead.
+// Pending, so the preprint draft is returned with a note instead. The DOI
+// itself came from the preprint, not from Crossref, so it is recorded on
+// the draft before it is returned: a failed lookup costs the published
+// metadata, not the identifier that named it.
 func mergePublished(c *sources.Crossref, p *store.Paper, entry *sources.ArxivEntry, doi string) *store.Paper {
 	work, err := c.Work(doi)
 	if err != nil {
 		p.Pending = addPending(p.Pending, fmt.Sprintf(
 			"crossref lookup of %s failed (%v); published metadata is missing", doi, err))
+		_, _ = p.RecordIdentifiers(doi, "")
 		return p
 	}
 	published, err := resolve.FromCrossref(work)
 	if err != nil {
 		p.Pending = addPending(p.Pending, fmt.Sprintf(
 			"crossref record %s is unusable (%v); published metadata is missing", doi, err))
+		_, _ = p.RecordIdentifiers(doi, "")
 		return p
 	}
 	return resolve.Merge(published, entry)

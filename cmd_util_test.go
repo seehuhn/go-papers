@@ -24,6 +24,7 @@ import (
 
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/config"
+	"seehuhn.de/go/paper/internal/match"
 	"seehuhn.de/go/paper/internal/store"
 )
 
@@ -169,6 +170,31 @@ func TestFindByTitleWrongSurnameNoMatch(t *testing.T) {
 	}
 	if key != "" {
 		t.Errorf("key = %q, want no match", key)
+	}
+}
+
+// TestFindByTitleNearMissDoesNotMatch is the regression case titleBar was
+// raised for: five shared tokens out of six score 0.833, and the surname
+// agrees, so the title bar is the only thing that can refuse the match.
+func TestFindByTitleNearMissDoesNotMatch(t *testing.T) {
+	initStore(t, "test@example.org")
+	s := openConfiguredStore(t)
+	if err := s.Save(&store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "none",
+		Bibtex: bibtex.Entry{Type: "book", Fields: map[string]string{
+			"author": "Author, Ann", "title": "A Short Book About Widgets", "year": "1994"}}}); err != nil {
+		t.Fatalf("saving the fixture entry: %v", err)
+	}
+	const near = "A Short Book About Small Widgets"
+	if got := match.TitleSimilarity(near, "A Short Book About Widgets"); got < 0.83 || got > 0.84 {
+		t.Fatalf("the pair scores %v; the case is meant to be the ~0.833 near miss", got)
+	}
+
+	key, err := findByTitle(s, near, "Author")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "" {
+		t.Errorf("key = %q, want no match: 0.833 is below the bar", key)
 	}
 }
 

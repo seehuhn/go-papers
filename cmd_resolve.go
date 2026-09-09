@@ -45,6 +45,8 @@ matching the year (print before e-book, hardcover before paperback),
 with the other editions listed after it. When the store already holds
 the work, a "store:" line names the entry and its holdings, and any
 identifier the entry lacked is recorded on it, which the output says.
+An identifier that contradicts one the entry already holds is reported
+as "conflict:" and resolve exits nonzero without writing.
 
 Free text that no single record clearly matches lists the candidates
 and exits nonzero; re-run with one of their identifiers.
@@ -202,8 +204,11 @@ func (r *resolver) recordOnHeldWork(p *store.Paper) error {
 
 	details, err := held.RecordIdentifiers(p.DOI, p.ISBN)
 	if err != nil {
+		// The conflict is reported once, on stdout, alongside the rest of
+		// what resolve found; the returned error only carries the nonzero
+		// exit, so that main does not print the same detail again.
 		fmt.Printf("conflict: %v\n", err)
-		return fmt.Errorf("resolve: %w", err)
+		return errors.New("resolve: identifier conflict")
 	}
 	if len(details) == 0 {
 		return nil

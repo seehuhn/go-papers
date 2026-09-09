@@ -354,6 +354,33 @@ func TestResolveOpenLibraryDownIsANote(t *testing.T) {
 	}
 }
 
+// TestResolveArxivKeepsDOIWhenCrossrefFails pins that a Crossref failure
+// costs only the published metadata: the DOI the preprint itself named is
+// still reported, because it came from arXiv and not from Crossref.
+func TestResolveArxivKeepsDOIWhenCrossrefFails(t *testing.T) {
+	initStore(t, "test@example.org")
+	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, arxivResponseWithDOI)
+	}))
+	t.Cleanup(arxivSrv.Close)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, arxivSrv.URL, "", "", "", "", "")
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"arXiv:2412.05039v2"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLine(t, out, "doi", "10.1234/example.doi")
+	wantLine(t, out, "arxiv", "2412.05039v2")
+}
+
 // widgetsBibtex is the bibtex the crossrefBookWithISBNResponse fixture
 // resolves to, reused by the tests below to build a held entry that
 // findDuplicate or findByTitle can match against it.
@@ -398,6 +425,43 @@ func TestResolveRecordsMissingIdentifierOnHeldWork(t *testing.T) {
 	}
 	if len(held.Log) != 1 || held.Log[0].Action != "resolve" {
 		t.Errorf("log = %+v, want one resolve entry", held.Log)
+	}
+}
+
+// TestResolveReportsCheckProblemsAfterWriting covers the "check:" branch:
+// the entry resolve wrote to has a problem of its own - here a page range
+// with a single dash - which resolve reports without undoing the write it
+// just made. The problem is unrelated to the identifiers, so it is the
+// entry's own business, not a reason to refuse.
+func TestResolveReportsCheckProblemsAfterWriting(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, crossrefBookWithISBNResponse), "", "", "", "", "",
+		openLibraryServer(t, `{"docs":[]}`))
+	s := openConfiguredStore(t)
+	held := &store.Paper{Key: "widgets_1994", Status: "clean", Holdings: "published",
+		DOI: "10.1000/widgets", Bibtex: widgetsBibtex()}
+	held.Bibtex.Fields["pages"] = "10-20"
+	if err := s.Save(held); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = runResolve([]string{"10.1000/widgets"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantExactLine(t, out, "recorded isbn 9780521406499 on widgets_1994")
+	wantExactLine(t, out, `check: bibtex.fields.pages: "10-20" uses a single "-"; page ranges should use "--"`)
+
+	reloaded, loadErr := s.Load("widgets_1994")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if reloaded.ISBN != "9780521406499" {
+		t.Errorf("ISBN = %q, want the write to stand despite the check problem", reloaded.ISBN)
 	}
 }
 
@@ -456,8 +520,14 @@ func TestResolveConflictingIdentifierFailsAndLeavesStoreUntouched(t *testing.T) 
 	if err == nil {
 		t.Fatal("a conflicting DOI must fail resolve")
 	}
-	if !strings.Contains(out, "conflict:") {
-		t.Errorf("output does not report the conflict:\n%s", out)
+	if !strings.Contains(out, "conflict:") ||
+		!strings.Contains(out, "10.9999/different") || !strings.Contains(out, "10.1000/widgets") {
+		t.Errorf("output does not report the conflict and both DOIs:\n%s", out)
+	}
+	// The conflict is reported once, on stdout. The error main prints on
+	// stderr must therefore not repeat the detail.
+	if err.Error() != "resolve: identifier conflict" {
+		t.Errorf("error = %q, want the bare \"resolve: identifier conflict\"", err)
 	}
 
 	held, loadErr := s.Load("widgets_1994")
