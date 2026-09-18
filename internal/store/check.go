@@ -344,10 +344,18 @@ func checkPages(p *Paper) []Problem {
 }
 
 // Rule 10: title has a capitalized word outside braces, beyond position
-// one. Tokenization runs on the raw (still bibtex-encoded) title: words
+// one -- that is, the title is in journal Title Case rather than sentence
+// case. Tokenization runs on the raw (still bibtex-encoded) title: words
 // are split on whitespace at brace level 0, and any text inside a brace
 // group is protected (excluded from the capitalization check), since it
-// is understood to be deliberately case-locked by the author.
+// is understood to be deliberately case-locked by the author. The word
+// opening a subtitle is exempt, since sentence case capitalizes it too;
+// see opensClause.
+//
+// The remedy is lower-casing, not the brace protection that
+// bibtex.BraceTitle applies to a word carrying a capital beyond its first
+// rune ("SPDEs", "KdV"). The two rules use different predicates on
+// purpose, so the warning must not ask for braces on a word like "Sums".
 func checkTitleCapitalization(p *Paper) []Problem {
 	title, ok := p.Bibtex.Fields["title"]
 	if !ok || title == "" {
@@ -394,6 +402,9 @@ func checkTitleCapitalization(p *Paper) []Problem {
 		if i == 0 || w.visible == "" {
 			continue
 		}
+		if opensClause(words[i-1].raw) {
+			continue
+		}
 		hasUpper := false
 		for _, r := range w.visible {
 			if unicode.IsUpper(r) {
@@ -403,10 +414,24 @@ func checkTitleCapitalization(p *Paper) []Problem {
 		}
 		if hasUpper {
 			problems = append(problems, Problem{p.Key, "warning", fmt.Sprintf(
-				"bibtex.fields.title: word %q may need brace protection", w.raw)})
+				"bibtex.fields.title: word %q is capitalized mid-title; "+
+					"lower-case it for sentence case, or brace it if it is a "+
+					"proper noun or acronym", w.raw)})
 		}
 	}
 	return problems
+}
+
+// opensClause reports whether word ends its clause, so that the word after it
+// begins a new one. Sentence case capitalizes a subtitle's first word just as
+// it capitalizes the title's, so that word is not a finding. Recognized
+// separators are a trailing colon ("Fast-dm:") and a run of two or more
+// hyphens standing alone ("--", the bibtex en/em dash).
+func opensClause(raw string) bool {
+	if strings.HasSuffix(raw, ":") {
+		return true
+	}
+	return strings.Trim(raw, "-") == "" && strings.Contains(raw, "--")
 }
 
 // Rule 11: type article but no doi field and DOI empty.

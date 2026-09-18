@@ -325,6 +325,53 @@ func TestCheckBraceProtectedOK(t *testing.T) {
 	}
 }
 
+// Rule 10 detects journal Title Case, whose remedy is lower-casing, not the
+// brace protection that BraceTitle applies to a word capitalized beyond its
+// first rune. Naming the wrong remedy invites "{Sums} of {Independent} ...",
+// which locks the journal styling in for good.
+func TestCheckCapitalizedSuspectNamesSentenceCase(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["title"] = "Sums of Independent Random Variables"
+	ps := CheckPaper(p)
+	if !problemsContain(ps, "sentence case") {
+		t.Errorf("warning does not name sentence case: %v", ps)
+	}
+	if problemsContain(ps, "brace protection") {
+		t.Errorf("warning still prescribes brace protection: %v", ps)
+	}
+}
+
+// Sentence case capitalizes the word that opens a subtitle, so the word after
+// a colon or a dash separator is not a finding.
+func TestCheckCapitalAfterColonOK(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["title"] = "Fast-dm: A free program for efficient diffusion model analysis"
+	if ps := CheckPaper(p); len(ps) != 0 {
+		t.Errorf("subtitle opener flagged: %v", ps)
+	}
+}
+
+func TestCheckCapitalAfterDoubleDashOK(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["title"] = "Mathematics programmes of study -- National curriculum in {E}ngland"
+	if ps := CheckPaper(p); len(ps) != 0 {
+		t.Errorf("dash-separated subtitle opener flagged: %v", ps)
+	}
+}
+
+// Only the opener is exempt: the rest of the subtitle is checked as usual.
+func TestCheckOnlyFirstWordAfterColonExempt(t *testing.T) {
+	p := makeCleanPaper()
+	p.Bibtex.Fields["title"] = "Fast-dm: A Free program"
+	ps := CheckPaper(p)
+	if problemsContain(ps, `"A"`) {
+		t.Errorf("subtitle opener flagged: %v", ps)
+	}
+	if !problemsContain(ps, `"Free"`) {
+		t.Errorf("missing warning for the rest of the subtitle: %v", ps)
+	}
+}
+
 // Rule 11
 func TestCheckArticleMissingDOI(t *testing.T) {
 	p := makeCleanPaper()
