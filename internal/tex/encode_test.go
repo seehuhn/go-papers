@@ -38,6 +38,12 @@ func TestEncode(t *testing.T) {
 		{"Statistics & Probability Letters", `Statistics \& Probability Letters`}, // ampersand
 		{"100% of x_1", `100\% of x\_1`},                                          // percent and underscore
 		{"C#, #tags & more", `C\#, \#tags \& more`},                               // hash
+		{"ı", `{\i}`},          // dotless i: literal macro, not an accent base
+		{"œuvre", `{\oe}uvre`}, // oe ligature
+		{"å", `{\aa}`},         // ring above: literal macro preferred over \r{a}
+		{"ą", `{\k{a}}`},       // ogonek: no literal macro, falls back to \k{a}
+		{"ṣ", `{\d{s}}`},       // dot below
+		{"ḇ", `{\b{b}}`},       // macron below
 	}
 	for _, c := range cases {
 		if got := Encode(c.in); got != c.want {
@@ -49,7 +55,8 @@ func TestEncode(t *testing.T) {
 func TestEncodeDecodeAgree(t *testing.T) {
 	// Whatever Encode produces must Decode back to the original text.
 	for _, s := range []string{"Voß", "Erdős", "Schrödinger", "Lévy", "Čech", "Łukasiewicz", "Håkon",
-		"Statistics & Probability Letters", "100% of x_1", "C# & F#"} {
+		"Statistics & Probability Letters", "100% of x_1", "C# & F#",
+		"ı", "ȷ", "œ", "Œ", "ð", "Ð", "đ", "Đ", "ŋ", "Ŋ", "þ", "Þ", "ẞ", "ą", "ṣ", "ḇ"} {
 		enc := Encode(s)
 		dec, unknown := Decode(enc)
 		if len(unknown) > 0 {

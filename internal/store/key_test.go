@@ -33,6 +33,8 @@ func TestMakeKey(t *testing.T) {
 		{`L\'evy, Paul`, "1937", "levy_1937"},
 		{"Smith-Jones, Ann and Doe, Jane", "2020", "smith-jones_2020"},
 		{"de la Vall{\\'e}e Poussin, Charles", "1896", "vallee-poussin_1896"},
+		{`Kabakc{\i}, Ali`, "2010", "kabakci_2010"},
+		{"Kabakcı, Ali", "2010", "kabakci_2010"},
 	}
 	for _, c := range cases {
 		got, err := MakeKey(c.author, c.year)

@@ -36,15 +36,19 @@ import (
 )
 
 // letterAccentMarks maps a single-letter TeX accent control word (\H, \c,
-// \v, \u) to the unicode combining mark it represents. These are control
-// words, not control symbols, so they only apply when the control word's
-// full (greedily tokenized) name is exactly that one letter - \Hello is
-// the unknown macro "Hello", not \H applied to "ello".
+// \v, \u, \r, \k, \d, \b) to the unicode combining mark it represents.
+// These are control words, not control symbols, so they only apply when
+// the control word's full (greedily tokenized) name is exactly that one
+// letter - \Hello is the unknown macro "Hello", not \H applied to "ello".
 var letterAccentMarks = map[byte]rune{
 	'H': 0x030B, // combining double acute accent (Hungarian)
 	'c': 0x0327, // combining cedilla
 	'v': 0x030C, // combining caron
 	'u': 0x0306, // combining breve
+	'r': 0x030A, // combining ring above
+	'k': 0x0328, // combining ogonek
+	'd': 0x0323, // combining dot below
+	'b': 0x0331, // combining macron below
 }
 
 // symbolAccentMarks maps a single-byte TeX accent control symbol
@@ -72,6 +76,19 @@ var literalMacros = map[string]string{
 	"AA": "Å",
 	"l":  "ł",
 	"L":  "Ł",
+	"i":  "ı",
+	"j":  "ȷ",
+	"oe": "œ",
+	"OE": "Œ",
+	"dh": "ð",
+	"DH": "Ð",
+	"dj": "đ",
+	"DJ": "Đ",
+	"ng": "ŋ",
+	"NG": "Ŋ",
+	"th": "þ",
+	"TH": "Þ",
+	"SS": "ẞ",
 }
 
 // controlSymbols maps TeX control symbols (backslash followed by exactly
@@ -215,12 +232,39 @@ func decodeMacro(s string, i int) (newI int, repl string, unknown string) {
 	return i + 2, "", string(ch)
 }
 
+// dotlessBase reads a greedily-tokenized control word starting at s[pos]
+// (the position just after a backslash) and, if it is exactly "i" or
+// "j" - TeX's dotless letters, used as the base of an accent so the
+// accent replaces the dot instead of colliding with it - returns the
+// plain ASCII letter to compose the accent with and the index just past
+// the name. Greedy tokenization applies here too: "in" is the unknown
+// macro "in", not \i followed by "n".
+func dotlessBase(s string, pos int) (base rune, newPos int, ok bool) {
+	n := len(s)
+	j := pos
+	for j < n && isASCIILetter(s[j]) {
+		j++
+	}
+	switch s[pos:j] {
+	case "i":
+		return 'i', j, true
+	case "j":
+		return 'j', j, true
+	}
+	return 0, 0, false
+}
+
 // tryAccentArgument looks for an accent macro's base-letter argument
-// starting at s[pos]: an optional run of whitespace, then either a
-// braced letter ("{o}") or a bare letter ("o"). On success it returns
-// the index just past the argument and the base letter NFC-composed
-// with mark; ok is false if no valid argument was found, in which case
-// pos and composed are meaningless.
+// starting at s[pos]: an optional run of whitespace, then a braced
+// letter ("{o}"), a bare letter ("o"), or - since TeX's dotless \i/\j
+// are the standard base for an accent that would otherwise land on a
+// dot - a braced or bare \i/\j control word ("{\i}", "\i"). The base
+// letter used to compose the accent is always the plain ASCII "i"/"j",
+// not the dotless glyph: ı+accent does not NFC-compose to the
+// precomposed letter, but i+accent does. On success tryAccentArgument
+// returns the index just past the argument and the base letter
+// NFC-composed with mark; ok is false if no valid argument was found,
+// in which case pos and composed are meaningless.
 func tryAccentArgument(s string, pos int, mark rune) (newPos int, composed string, ok bool) {
 	n := len(s)
 	for pos < n && isASCIISpace(s[pos]) {
@@ -230,10 +274,25 @@ func tryAccentArgument(s string, pos int, mark rune) (newPos int, composed strin
 		if pos+2 < n && isASCIILetter(s[pos+1]) && s[pos+2] == '}' {
 			return pos + 3, norm.NFC.String(string(s[pos+1]) + string(mark)), true
 		}
+		if pos+1 < n && s[pos+1] == '\\' {
+			if base, end, ok2 := dotlessBase(s, pos+2); ok2 && end < n && s[end] == '}' {
+				return end + 1, norm.NFC.String(string(base) + string(mark)), true
+			}
+		}
 		return 0, "", false
 	}
 	if pos < n && isASCIILetter(s[pos]) {
 		return pos + 1, norm.NFC.String(string(s[pos]) + string(mark)), true
+	}
+	if pos < n && s[pos] == '\\' {
+		// A bare \i/\j control word absorbs the whitespace that follows
+		// it, same as literalMacros control words do.
+		if base, end, ok2 := dotlessBase(s, pos+1); ok2 {
+			for end < n && isASCIISpace(s[end]) {
+				end++
+			}
+			return end, norm.NFC.String(string(base) + string(mark)), true
+		}
 	}
 	return 0, "", false
 }
@@ -248,16 +307,23 @@ var foldReplacer = strings.NewReplacer(
 	"æ", "ae",
 	"ø", "o",
 	"ł", "l",
+	"ı", "i",
+	"ȷ", "j",
+	"œ", "oe",
+	"ð", "d",
+	"đ", "d",
+	"ŋ", "ng",
+	"þ", "th",
 	string(noBreakSpace), " ",
 )
 
 // Fold decodes s (see Decode) and then reduces it to a normalized,
 // case-, diacritic- and accent-insensitive form suitable for search
 // matching: unicode NFD normalization, combining-mark removal,
-// lowercasing, and the ß/æ/ø/ł substitutions above. The substitutions
-// run after lowercasing so that they also catch the uppercase originals
-// (Æ, Ø, Ł, ẞ), none of which have an NFD decomposition of their own
-// to fall back on.
+// lowercasing, and the ß/æ/ø/ł/ı/ȷ/œ/ð/đ/ŋ/þ substitutions above. The
+// substitutions run after lowercasing so that they also catch the
+// uppercase originals (Æ, Ø, Ł, ẞ, Œ, Ð, Đ, Ŋ, Þ), none of which have an
+// NFD decomposition of their own to fall back on.
 func Fold(s string) string {
 	decoded, _ := Decode(s)
 	nfd := norm.NFD.String(decoded)

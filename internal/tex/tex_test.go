@@ -52,6 +52,29 @@ func TestDecode(t *testing.T) {
 		{`\{`, `{`, nil},                      // control symbol
 		{`\}`, `}`, nil},                      // control symbol
 		{`\@`, ``, []string{"@"}},             // unrecognized control symbol: reported unknown, char consumed
+		{`Kabakc{\i}`, `Kabakcı`, nil},        // dotless i, literal macro
+		{`{\j}`, `ȷ`, nil},                    // dotless j, literal macro
+		{`\oe{}ther`, `œther`, nil},           // oe ligature
+		{`\OE{}uvre`, `Œuvre`, nil},           // OE ligature
+		{`\dh{}`, `ð`, nil},                   // eth
+		{`\DH{}`, `Ð`, nil},                   // eth
+		{`\dj{}`, `đ`, nil},                   // d with stroke
+		{`\DJ{}`, `Đ`, nil},                   // D with stroke
+		{`\ng{}`, `ŋ`, nil},                   // eng
+		{`\NG{}`, `Ŋ`, nil},                   // eng
+		{`\th{}`, `þ`, nil},                   // thorn
+		{`\TH{}`, `Þ`, nil},                   // thorn
+		{`\SS{}`, `ẞ`, nil},                   // capital sharp s
+		{`{\'\i}`, `í`, nil},                  // acute on dotless i, base as bare control word
+		{`\'{\i}`, `í`, nil},                  // acute on dotless i, base braced
+		{`{\"\i}`, `ï`, nil},                  // diaeresis on dotless i, base as bare control word
+		{`\^\j`, "ĵ", nil},                    // circumflex on dotless j
+		{`\'\i n`, `ín`, nil},                 // control word \i absorbs the following space
+		{`\'\in`, ``, []string{"'", "in"}},    // greedy tokenization: \in is unknown, not \i + "n"
+		{`\r{a}`, `å`, nil},                   // ring above
+		{`\k{a}`, `ą`, nil},                   // ogonek
+		{`\d{s}`, `ṣ`, nil},                   // dot below
+		{`\b{b}`, `ḇ`, nil},                   // macron below
 	}
 	for _, c := range cases {
 		got, unknown := Decode(c.in)
@@ -69,10 +92,18 @@ func TestFold(t *testing.T) {
 		{`Vo{\ss}`, `voss`},
 		{`L\'evy`, `levy`},
 		{`{McKean}--{V}lasov`, `mckean–vlasov`},
-		{`\AE`, `ae`},        // uppercase literal macro folds correctly
-		{`\O`, `o`},          // uppercase literal macro folds correctly
-		{`\L`, `l`},          // uppercase literal macro folds correctly
-		{`Ørsted`, `orsted`}, // already-unicode uppercase Ø, not a macro
+		{`\AE`, `ae`},               // uppercase literal macro folds correctly
+		{`\O`, `o`},                 // uppercase literal macro folds correctly
+		{`\L`, `l`},                 // uppercase literal macro folds correctly
+		{`Ørsted`, `orsted`},        // already-unicode uppercase Ø, not a macro
+		{`Kabakcı`, `kabakci`},      // dotless i folds to i
+		{`Kabakc{\i}`, `kabakci`},   // ditto, via the literal macro
+		{`\OE{}uvre`, `oeuvre`},     // uppercase OE ligature folds correctly
+		{`\TH{}or`, `thor`},         // uppercase thorn folds correctly
+		{`\DH{}el`, `del`},          // uppercase eth folds correctly
+		{`\DJ{}or{\dj}e`, `dorde`},  // uppercase and lowercase d-with-stroke fold to d
+		{`\NG{}`, `ng`},             // uppercase eng folds correctly
+		{`\SS{}chluss`, `sschluss`}, // capital sharp s folds like ss
 	}
 	for _, c := range cases {
 		if got := Fold(c.in); got != c.want {
