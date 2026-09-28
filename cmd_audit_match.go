@@ -174,7 +174,15 @@ func foldedJoin(s string) string {
 // "unchecked", never "notFound".
 func (a *auditor) verify(e bibtex.KeyedEntry) (string, []auditCandidate) {
 	if doi := strings.TrimSpace(e.Entry.Fields["doi"]); doi != "" {
-		switch _, err := a.crossref().Work(doi); {
+		switch work, err := a.crossref().Work(doi); {
+		case err == nil && sources.IsContainerType(work.Type):
+			// Crossref knows this DOI, but it names a container (a
+			// journal, a book series, ...), not this paper: the DOI
+			// does not confirm the entry it is attached to. Fall
+			// through to the arXiv/search ladder below exactly as when
+			// neither Crossref nor the handle system knows the DOI —
+			// treating a real handle as proof of the wrong paper's
+			// existence would be worse than not checking at all.
 		case err == nil:
 			return "confirmed", nil
 		case errors.Is(err, sources.ErrNotFound):

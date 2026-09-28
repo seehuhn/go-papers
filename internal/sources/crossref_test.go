@@ -158,6 +158,31 @@ func TestCrossrefWorkNotFound(t *testing.T) {
 	}
 }
 
+func TestIsContainerType(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"journal", true},
+		{"journal-volume", true},
+		{"journal-issue", true},
+		{"book-series", true},
+		{"book-set", true},
+		{"proceedings-series", true},
+		{"report-series", true},
+		{"journal-article", false},
+		{"book", false},
+		{"book-chapter", false},
+		{"proceedings-article", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsContainerType(c.in); got != c.want {
+			t.Errorf("IsContainerType(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 func TestCrossrefSearch(t *testing.T) {
 	c, _ := newCrossrefTestServer(t)
 	hits, err := c.Search("Hoeffding probability inequalities 1963", 5)

@@ -80,6 +80,31 @@ type crossrefSearchMessage struct {
 	} `json:"message"`
 }
 
+// containerCrossrefTypes are Crossref work types that name a container -
+// a journal, a book series or set, a report series, or one volume/issue
+// of one - rather than a single citable work. Crossref mixes the two
+// under the same "type" field and the same DOI namespace: a journal's
+// own DOI (e.g. 10.1073/pnas for PNAS) returns a "journal" record with
+// no authors, and looks like a perfectly good handle right up until
+// resolve.FromCrossref tries to build an entry from it. See
+// https://api.crossref.org/types for Crossref's full type list.
+var containerCrossrefTypes = map[string]bool{
+	"journal":            true,
+	"journal-volume":     true,
+	"journal-issue":      true,
+	"book-series":        true,
+	"book-set":           true,
+	"proceedings-series": true,
+	"report-series":      true,
+}
+
+// IsContainerType reports whether t is a Crossref work type that names a
+// container (see containerCrossrefTypes) rather than a single citable
+// work.
+func IsContainerType(t string) bool {
+	return containerCrossrefTypes[t]
+}
+
 // Crossref is a client for the Crossref REST API
 // (https://api.crossref.org).
 type Crossref struct {

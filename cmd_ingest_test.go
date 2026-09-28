@@ -51,19 +51,41 @@ func makeIngestPDF(t *testing.T, path, title, doi string) {
 // reaching one of those services is a failure by construction rather
 // than something the fixtures happen to avoid.
 //
-// The handle resolver is the one exception: tier 2 now confirms a DOI
-// extracted from a PDF's page text through it before accepting the DOI
-// (see pdfid.Config.ValidateDOI), so -into's identity check legitimately
-// consults it even though nothing else here should be reached.
-// confirmingHandleServer reports every DOI as existing, which is all
-// these tests need - they are not testing handle-existence semantics.
+// The handle resolver and Crossref are the two exceptions: tier 2 now
+// confirms a DOI extracted from a PDF's page text through the handle
+// system, and then, once that DOI is confirmed to exist, checks its
+// Crossref record is not a container type before accepting it (see
+// (*ingester).validateDOI), so -into's identity check legitimately
+// consults both even though nothing else here should be reached.
+// confirmingHandleServer reports every DOI as existing and
+// confirmingCrossrefServer reports every DOI as a plain journal article,
+// which is all these tests need - they are not testing handle-existence
+// or container-type semantics.
 func guardBases(t *testing.T) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("no online service may be contacted here: %s", r.URL)
 	}))
 	t.Cleanup(srv.Close)
-	overrideBases(t, srv.URL, srv.URL, srv.URL, srv.URL, srv.URL, confirmingHandleServer(t), "")
+	overrideBases(t, confirmingCrossrefServer(t), srv.URL, srv.URL, srv.URL, srv.URL, confirmingHandleServer(t), "")
+}
+
+// confirmingCrossrefServer returns the URL of a Crossref stub that
+// answers every /works/<doi> lookup with a generic journal-article
+// record: not a container type, so validateDOI's Crossref check always
+// accepts it. Fixtures that need tier 2 to accept a DOI candidate,
+// without caring about the resolved work's actual content, wire this in
+// as the crossref base - see guardBases.
+func confirmingCrossrefServer(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work","message":{
+		  "DOI":"10.0000/stub","type":"journal-article",
+		  "title":["Stub Title"],"author":[{"family":"Stub"}],
+		  "published":{"date-parts":[[2000]]}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 // pickupTitleBases points crossref at a stub that reports no hits, and
@@ -269,6 +291,58 @@ func TestIngestBatchCreatesEntries(t *testing.T) {
 	}
 	if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
 		t.Error("source file must be moved away")
+	}
+}
+
+// TestIngestSkipsContainerTypeDOICandidate pins the identify-step half of
+// the container-type-DOI fix (see sources.IsContainerType): a PDF page
+// that mentions a journal's own DOI (10.1073/pnas, a "journal" Crossref
+// record with no authors) ahead of the article's own DOI must not let
+// tier 2 settle on the journal DOI just because it exists at the handle
+// system. validateDOI must also reject it via its Crossref type, sending
+// tier 2 on to the article DOI that follows - the "move on to the next
+// candidate" behavior the fix requires. The two DOIs here share no
+// prefix, so this exercises that fallback on its own, independent of the
+// prefix-dropping fix in internal/doi.
+func TestIngestSkipsContainerTypeDOICandidate(t *testing.T) {
+	fetchFixtureStore(t)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/works/10.1073/pnas":
+			io.WriteString(w, `{"status":"ok","message-type":"work","message":{
+			  "DOI":"10.1073/pnas","type":"journal",
+			  "title":["Proceedings of the National Academy of Sciences"]}}`)
+		case "/works/10.5555/example.2024":
+			io.WriteString(w, `{"status":"ok","message-type":"work","message":{
+			  "DOI":"10.5555/example.2024","type":"journal-article",
+			  "title":["An Example Article"],
+			  "author":[{"given":"Jane","family":"Doe"}],
+			  "published":{"date-parts":[[2024]]}}}`)
+		default:
+			t.Errorf("unexpected crossref request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	refuse := refusingServer(t)
+	overrideBases(t, crossrefSrv.URL, refuse, refuse, refuse, refuse, confirmingHandleServer(t), "")
+
+	f := filepath.Join(t.TempDir(), "paper.pdf")
+	pdfidtest.MakePDF(t, f, "An Example Article", "Test Author",
+		[]string{"An Example Article", "DOI: 10.1073/pnas", "DOI: 10.5555/example.2024"},
+		[]float64{24, 10, 10})
+
+	if err := runIngest([]string{f}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := openConfiguredStore(t)
+	p, err := s.Load("doe_2024")
+	if err != nil {
+		t.Fatalf("entry should have been created under the article's DOI, not the journal's: %v", err)
+	}
+	if p.DOI != "10.5555/example.2024" {
+		t.Errorf("DOI = %q, want the article DOI", p.DOI)
 	}
 }
 

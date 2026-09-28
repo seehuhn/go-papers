@@ -277,6 +277,13 @@ func checkOnline(c *sources.Crossref, key string, p *store.Paper) []store.Proble
 		return []store.Problem{{Key: key, Severity: "warning",
 			Msg: fmt.Sprintf("crossref lookup failed: %v", err)}}
 	}
+	if sources.IsContainerType(work.Type) {
+		// The stored DOI resolves, but to a container (a journal, a book
+		// series, ...), not this paper: as wrong an identifier for the
+		// entry as one that 404s, so this is an error, not a warning.
+		return []store.Problem{{Key: key, Severity: "error",
+			Msg: fmt.Sprintf("%s is a %s DOI, not an article", p.DOI, work.Type)}}
+	}
 
 	var problems []store.Problem
 	if len(work.Titles) > 0 {

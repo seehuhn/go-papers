@@ -158,6 +158,26 @@ func TestResolveDOI(t *testing.T) {
 	}
 }
 
+// TestResolveDOIRejectsContainerType pins that resolving a container's
+// own DOI (a journal, here) fails with a message naming what went wrong,
+// rather than resolve.FromCrossref's generic "missing authors" - the
+// same fix as paper ingest's, reached through resolveDOI's plain
+// pass-through of FromCrossref's error.
+func TestResolveDOIRejectsContainerType(t *testing.T) {
+	initStore(t, "test@example.org")
+	overrideBases(t, crossrefServer(t, `{"status":"ok","message-type":"work","message":{
+	  "DOI":"10.1073/pnas","type":"journal",
+	  "title":["Proceedings of the National Academy of Sciences"]}}`), "", "", "", "", "", "")
+
+	err := runResolve([]string{"10.1073/pnas"})
+	if err == nil {
+		t.Fatal("want an error for a container-type DOI")
+	}
+	if !strings.Contains(err.Error(), "journal DOI, not an article") {
+		t.Errorf("err = %v, want it to name the container type", err)
+	}
+}
+
 func TestResolveArxivWithDOI(t *testing.T) {
 	initStore(t, "test@example.org")
 	arxivSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

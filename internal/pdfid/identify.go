@@ -56,11 +56,14 @@ type SearchHit struct {
 // cmd_ingest wires this to Crossref; tests use a stub.
 type SearchFunc func(titleGuess string) (SearchHit, error)
 
-// ValidateDOIFunc reports whether doiCandidate is a registered DOI. Tier
-// 2 uses it to pick the right rung of a prose DOI candidate's trim
-// ladder (see Config and tier2); cmd_ingest.go and cmd_fetch.go wire
-// this to sources.Handle.Exists, which checks existence independent of
-// which registration agency issued the DOI.
+// ValidateDOIFunc reports whether doiCandidate is a DOI that can
+// identify this paper. Tier 2 uses it to pick the right rung of a prose
+// DOI candidate's trim ladder (see Config and tier2); cmd_ingest.go
+// wires this to a check that combines handle existence (independent of
+// which registration agency issued the DOI) with rejecting a Crossref
+// container-type record (a journal, a book series, ...), which exists
+// just as validly as one of its own articles' DOIs but is not a single
+// work.
 type ValidateDOIFunc func(doiCandidate string) (bool, error)
 
 // Config bundles Identify's optional external resolvers. Search backs

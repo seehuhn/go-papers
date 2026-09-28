@@ -135,6 +135,37 @@ func TestCandidatesSubdividedRegistrant(t *testing.T) {
 	}
 }
 
+// TestCandidatesDropsTruncatedPrefix pins the bug behind "paper ingest"
+// filing a PNAS article under its journal's own DOI: page 1 breaks
+// "10.1073/pnas.2422633122" across a line inside a supplementary-material
+// URL, truncating the extracted run at the line break to
+// "10.1073/pnas." - a real, separately registered DOI (the PNAS journal
+// itself) - while the article's own, untruncated DOI appears intact
+// elsewhere on the same page. The truncated run is a proper prefix of the
+// real one and must be dropped, leaving only the real DOI's ladder.
+func TestCandidatesDropsTruncatedPrefix(t *testing.T) {
+	text := "at https://www.pnas.org/lookup/suppl/doi:10.1073/pnas.\n" +
+		"2422633122/-/DCSupplemental.\n" +
+		"See https://doi.org/10.1073/pnas.2422633122 for details."
+	got := Candidates(text)
+	want := []string{"10.1073/pnas.2422633122"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Candidates(%q) = %q, want %q", text, got, want)
+	}
+}
+
+// TestCandidatesKeepsUnrelatedShortMatch checks that dropping a prefix
+// match does not over-fire: a short DOI that is not a textual prefix of
+// the longer one - merely sharing the same registrant - is kept.
+func TestCandidatesKeepsUnrelatedShortMatch(t *testing.T) {
+	text := "10.1073/pnaz and 10.1073/pnas.2422633122"
+	got := Candidates(text)
+	want := []string{"10.1073/pnaz", "10.1073/pnas.2422633122"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Candidates(%q) = %q, want %q", text, got, want)
+	}
+}
+
 func TestCandidatesNone(t *testing.T) {
 	if got := Candidates("no identifiers here"); got != nil {
 		t.Errorf("Candidates = %q, want nil", got)

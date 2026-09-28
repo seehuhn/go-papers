@@ -82,13 +82,23 @@ var candidatePattern = regexp.MustCompile(registrant + `/\S+`)
 // parenthetical) cannot be decided by a fixed character class.
 const trimChars = `.,;:!?'"`
 
-// Candidates scans text for DOI-shaped runs and returns, for each in the
-// order it was found, a trim ladder longest first: the raw greedy match,
-// then that match with exactly one trailing punctuation byte removed,
-// repeated until the trailing byte is no longer punctuation (or, for a
-// trailing ')', is balanced within the candidate - see the package
-// doc). All of a match's ladder rungs appear together, in ladder order,
-// before the next match's rungs begin.
+// Candidates scans text for DOI-shaped runs and returns, for each
+// surviving match in the order it was found, a trim ladder longest
+// first: the raw greedy match, then that match with exactly one trailing
+// punctuation byte removed, repeated until the trailing byte is no
+// longer punctuation (or, for a trailing ')', is balanced within the
+// candidate - see the package doc). All of a match's ladder rungs appear
+// together, in ladder order, before the next match's rungs begin.
+//
+// Before laddering, a raw match that is a case-insensitive proper prefix
+// of another raw match is dropped entirely (see dropPrefixMatches): a
+// DOI broken across a PDF line - "10.1073/pnas.\n2422633122/-/..." -
+// extracts as the truncated run "10.1073/pnas.", which happens to be a
+// real, separately registered DOI (the containing journal) when the
+// article's own, untruncated DOI "10.1073/pnas.2422633122" also appears
+// elsewhere in the same text. Left in, the truncated form would validate
+// against an authority just as well as the real one and could be picked
+// first; dropped, only the longer, correct candidate remains.
 //
 // Every returned candidate satisfies Syntactic: trimming only ever
 // removes trailing punctuation bytes, never bytes that were required for
@@ -101,10 +111,41 @@ const trimChars = `.,;:!?'"`
 // return the wrong one whenever the longer form is also real.
 func Candidates(text string) []string {
 	var out []string
-	for _, m := range candidatePattern.FindAllString(text, -1) {
+	for _, m := range dropPrefixMatches(candidatePattern.FindAllString(text, -1)) {
 		out = append(out, ladder(m)...)
 	}
 	return out
+}
+
+// dropPrefixMatches removes any match that is a case-insensitive proper
+// prefix of another match in matches, keeping the rest in their original
+// order. It compares the raw matches themselves, before laddering - not
+// a match's own trim-ladder rungs, which are deliberately all kept (see
+// Candidates and TestCandidatesTrimLadder): a trailing-punctuation rung
+// is always a prefix of the rung before it, but that is the ladder doing
+// its job, not two different DOI-shaped runs competing for the same
+// paper.
+func dropPrefixMatches(matches []string) []string {
+	var out []string
+	for i, a := range matches {
+		prefixOfAnother := false
+		for j, b := range matches {
+			if i != j && isProperPrefix(a, b) {
+				prefixOfAnother = true
+				break
+			}
+		}
+		if !prefixOfAnother {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// isProperPrefix reports whether a is a case-insensitive proper prefix of
+// b: shorter than b, and equal (ignoring case) to b's leading bytes.
+func isProperPrefix(a, b string) bool {
+	return len(a) < len(b) && strings.EqualFold(a, b[:len(a)])
 }
 
 // ladder returns match's trim ladder, longest (match itself) first, by

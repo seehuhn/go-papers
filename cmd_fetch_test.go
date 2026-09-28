@@ -195,6 +195,30 @@ func TestFetchDOIWithOA(t *testing.T) {
 	}
 }
 
+// TestFetchDOIRejectsContainerType pins that fetching a container's own
+// DOI (a journal, here) fails with a message naming what went wrong,
+// rather than resolve.FromCrossref's generic "missing authors" - reached
+// through fetchWork's plain pass-through of that error, before Unpaywall
+// is ever consulted.
+func TestFetchDOIRejectsContainerType(t *testing.T) {
+	fetchFixtureStore(t)
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work","message":{
+		  "DOI":"10.1073/pnas","type":"journal",
+		  "title":["Proceedings of the National Academy of Sciences"]}}`)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	overrideBases(t, crossrefSrv.URL, "", refusingServer(t), "", "", "", "")
+
+	err := runFetch([]string{"10.1073/pnas"})
+	if err == nil {
+		t.Fatal("want an error for a container-type DOI")
+	}
+	if !strings.Contains(err.Error(), "journal DOI, not an article") {
+		t.Errorf("err = %v, want it to name the container type", err)
+	}
+}
+
 func TestFetchDOIWithoutOA(t *testing.T) {
 	fetchFixtureStore(t)
 	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

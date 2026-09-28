@@ -232,6 +232,27 @@ func TestFromCrossrefAllAuthorsEmpty(t *testing.T) {
 	}
 }
 
+// TestFromCrossrefRejectsContainerType pins the fix for the PNAS ingest
+// bug: a Crossref record whose type names a container - the journal
+// itself, here - rather than a single work must be rejected with a
+// message that says what happened, not "missing authors", even though a
+// container record does also have zero authors.
+func TestFromCrossrefRejectsContainerType(t *testing.T) {
+	w := &sources.CrossrefWork{
+		DOI:    "10.1073/pnas",
+		Type:   "journal",
+		Titles: []string{"Proceedings of the National Academy of Sciences"},
+	}
+	_, err := FromCrossref(w)
+	if err == nil {
+		t.Fatal("want an error for a container-type Crossref record")
+	}
+	want := "10.1073/pnas is a journal DOI, not an article"
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+}
+
 func arxivEntry() *sources.ArxivEntry {
 	return &sources.ArxivEntry{
 		ID: "2412.05039", Version: 2,

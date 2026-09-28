@@ -68,6 +68,16 @@ func crossrefType(t string) string {
 func FromCrossref(w *sources.CrossrefWork) (*store.Paper, error) {
 	identity := crossrefIdentity(w)
 
+	// A container record (a journal, a book series, ...) is not a single
+	// work: it has no authors of its own, and building an entry from it
+	// would either fail confusingly on the "missing authors" check below
+	// or, worse, succeed with nonsense fields. Reject it here with a
+	// message that names what actually went wrong, rather than letting
+	// it fall through to "missing authors" further down.
+	if sources.IsContainerType(w.Type) {
+		return nil, fmt.Errorf("%s is a %s DOI, not an article", identity, w.Type)
+	}
+
 	if len(w.Titles) == 0 || w.Titles[0] == "" {
 		return nil, fmt.Errorf("crossref work %s: missing title", identity)
 	}

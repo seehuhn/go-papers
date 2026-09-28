@@ -80,6 +80,50 @@ func TestAuditConfirmsAResolvableDOI(t *testing.T) {
 	}
 }
 
+// TestAuditContainerTypeDOIDoesNotConfirm pins that a bib entry whose doi
+// field is a container's own DOI (a journal, here) — which exists at
+// Crossref just as validly as one of its articles' DOIs — is not treated
+// as confirming the entry: Crossref naming a container, not a single
+// work, must fall through to the search ladder exactly like a DOI
+// neither Crossref nor the handle system has ever heard of.
+func TestAuditContainerTypeDOIDoesNotConfirm(t *testing.T) {
+	dir := initStore(t, "test@example.org")
+	crossrefSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work","message":{
+		  "DOI":"10.1073/pnas","type":"journal",
+		  "title":["Proceedings of the National Academy of Sciences"]}}`)
+	}))
+	t.Cleanup(crossrefSrv.Close)
+	emptyList := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(emptyList.Close)
+	overrideBases(t, crossrefSrv.URL, refusingServer(t), refusingServer(t), emptyList.URL, emptyList.URL, "", "")
+
+	bib := filepath.Join(dir, "refs.bib")
+	os.WriteFile(bib, []byte(`@article{wrong,
+  author = {Somebody, A.},
+  title = {A paper mistakenly tagged with the journal's own DOI},
+  journal = {Proc. Natl. Acad. Sci.},
+  year = {2025},
+  doi = {10.1073/pnas},
+}`), 0o644)
+
+	out := captureStdout(t, func() {
+		if err := runAudit([]string{"-json", bib}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	})
+
+	var r auditReport
+	if err := json.Unmarshal([]byte(out), &r, json.RejectUnknownMembers(true)); err != nil {
+		t.Fatalf("parsing the report: %v", err)
+	}
+	if r.Entries[0].Existence == "confirmed" {
+		t.Error("Existence = confirmed: a journal's own DOI must not confirm an article")
+	}
+}
+
 // refusingServer returns the URL of a server that fails the test if it is
 // contacted. A test that does not expect a particular source should give
 // it an explicit refusing URL to catch accidental requests.

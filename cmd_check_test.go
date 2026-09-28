@@ -263,6 +263,39 @@ func TestCheckOnline(t *testing.T) {
 	}
 }
 
+// TestCheckOnlineFlagsContainerTypeDOI pins that a stored doi field that
+// resolves to a container (a journal, here) rather than a single work is
+// an error, not silently accepted: the DOI exists at Crossref just as
+// validly as one of the journal's own articles', so the plain resolves/
+// does-not-resolve check above would miss it.
+func TestCheckOnlineFlagsContainerTypeDOI(t *testing.T) {
+	dir := initStore(t, "")
+	s, _ := store.Open(dir)
+	wrong := &store.Paper{Key: "wrong_2025", Status: "draft", Holdings: "none",
+		DOI: "10.1073/pnas",
+		Bibtex: bibtex.Entry{Type: "article", Fields: map[string]string{
+			"author": "Somebody, A.", "title": "A paper tagged with the journal's own DOI",
+			"journal": "Proc. Natl. Acad. Sci.", "year": "2025", "doi": "10.1073/pnas"}}}
+	s.Save(wrong)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"ok","message-type":"work","message":{
+		  "DOI":"10.1073/pnas","type":"journal",
+		  "title":["Proceedings of the National Academy of Sciences"]}}`)
+	}))
+	t.Cleanup(srv.Close)
+	overrideBases(t, srv.URL, "", "", "", "", "", "")
+
+	out := captureStdout(t, func() {
+		if err := runCheck([]string{"-online"}); err == nil {
+			t.Error("a journal DOI stored as an article's must make check fail")
+		}
+	})
+	if !strings.Contains(out, "wrong_2025") || !strings.Contains(out, "journal DOI, not an article") {
+		t.Errorf("output should flag the container-type DOI:\n%s", out)
+	}
+}
+
 // TestCheckOnlineDoesNotMisreadA5xxBodyAsNotFound is the regression test
 // for the review finding that checkOnline used to detect a 404 by
 // matching the literal text "not found" in the error message. getJSON's

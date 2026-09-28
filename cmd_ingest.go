@@ -859,14 +859,13 @@ func (in *ingester) ingestOne(f ingestFile, doiOverride, arxivOverride string) (
 
 // identify extracts what a PDF says about itself and runs the pdfid tiers
 // over it. Tier 3 resolves its title guess through Crossref; tier 2
-// confirms a prose DOI candidate's existence through the handle system
-// (see (*ingester).handle).
+// confirms a prose DOI candidate through validateDOI.
 func (in *ingester) identify(path string) (*pdfid.DocText, pdfid.ID, error) {
 	doc, err := pdfid.Extract(path, ingestPages)
 	if err != nil {
 		return nil, pdfid.ID{}, err
 	}
-	cfg := pdfid.Config{Search: in.searchTitle, ValidateDOI: in.handle().Exists}
+	cfg := pdfid.Config{Search: in.searchTitle, ValidateDOI: in.validateDOI}
 	return doc, pdfid.Identify(doc, cfg), nil
 }
 
@@ -874,6 +873,35 @@ func (in *ingester) identify(path string) (*pdfid.DocText, pdfid.ID, error) {
 // pattern in cmd_fetch.go's auditor.
 func (in *ingester) handle() *sources.Handle {
 	return &sources.Handle{BaseURL: handleBase, Client: in.api}
+}
+
+// validateDOI is tier 2's pdfid.ValidateDOIFunc: a prose DOI candidate
+// must both exist at the handle system, independent of registration
+// agency, and - when Crossref knows it - name a single work rather than
+// a container (a journal, a book series, ...). The second check is what
+// the handle system cannot give us: a journal's own DOI (e.g.
+// 10.1073/pnas for PNAS) exists just as validly as one of its articles',
+// so handle existence alone cannot tell them apart, and a PDF's text
+// frequently mentions both. A container-type DOI is reported as not
+// valid, exactly like one the handle system has never heard of, which
+// sends tier 2 on to the next candidate rather than settling on a DOI
+// that would only fail confusingly later, in resolve.FromCrossref.
+//
+// A Crossref lookup failure here (network error, or simply a DOI
+// Crossref does not register - DataCite: Zenodo, figshare, many
+// arXiv-issued DOIs) does not contradict the handle system's existence
+// check, so it is not treated as a validation error; the candidate is
+// accepted on the handle check alone, as before this method existed.
+func (in *ingester) validateDOI(candidate string) (bool, error) {
+	exists, err := in.handle().Exists(candidate)
+	if err != nil || !exists {
+		return exists, err
+	}
+	work, err := in.crossref().Work(candidate)
+	if err != nil {
+		return true, nil
+	}
+	return !sources.IsContainerType(work.Type), nil
 }
 
 // searchTitle is the pdfid.SearchFunc for tier 3: it runs the title guess
