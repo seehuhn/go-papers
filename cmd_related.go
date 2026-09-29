@@ -245,6 +245,9 @@ func runRelated(args []string) error {
 		}
 		return fmt.Errorf("related: parsing arguments: %w", err)
 	}
+	if err := checkNoTrailingFlags("related", ".bib file", fs.Args()); err != nil {
+		return err
+	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("related: expected exactly one .bib file, got %d arguments", fs.NArg())
 	}

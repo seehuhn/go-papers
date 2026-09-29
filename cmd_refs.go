@@ -96,6 +96,9 @@ func runRefs(args []string) error {
 		}
 		return fmt.Errorf("refs: parsing arguments: %w", err)
 	}
+	if err := checkNoTrailingFlags("refs", "ID", fs.Args()); err != nil {
+		return err
+	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("refs: expected exactly one ID (OpenAlex ID, DOI or arXiv ID), got %d arguments", fs.NArg())
 	}

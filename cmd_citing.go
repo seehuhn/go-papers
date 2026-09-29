@@ -90,6 +90,9 @@ func runCiting(args []string) error {
 		}
 		return fmt.Errorf("citing: parsing arguments: %w", err)
 	}
+	if err := checkNoTrailingFlags("citing", "ID", fs.Args()); err != nil {
+		return err
+	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("citing: expected exactly one ID (OpenAlex ID, DOI or arXiv ID), got %d arguments", fs.NArg())
 	}

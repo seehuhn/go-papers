@@ -150,3 +150,26 @@ func TestDiscoverNeedsQuery(t *testing.T) {
 		t.Fatalf("error %v, want prefix discover:", err)
 	}
 }
+
+func TestTrailingFlagsGetAHint(t *testing.T) {
+	fixtureStore(t)
+	for _, c := range []struct {
+		run  func([]string) error
+		args []string
+		want string
+	}{
+		{runDiscover, []string{"gaussian", "processes", "-since", "2020"},
+			`discover: flags go before the query (got "-since")`},
+		{runCiting, []string{"W1", "-since", "2020"},
+			`citing: flags go before the ID (got "-since")`},
+		{runRelated, []string{"refs.bib", "-n", "5"},
+			`related: flags go before the .bib file (got "-n")`},
+		{runRefs, []string{"W1", "-short"},
+			`refs: flags go before the ID (got "-short")`},
+	} {
+		err := c.run(c.args)
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%v: error %v, want %q", c.args, err, c.want)
+		}
+	}
+}

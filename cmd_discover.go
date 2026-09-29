@@ -86,6 +86,9 @@ func runDiscover(args []string) error {
 		return fmt.Errorf("discover: parsing arguments: %w", err)
 	}
 
+	if err := checkNoTrailingFlags("discover", "query", fs.Args()); err != nil {
+		return err
+	}
 	query := strings.Join(fs.Args(), " ")
 	if strings.TrimSpace(query) == "" {
 		return fmt.Errorf("discover: no query given; supply the words to search for")

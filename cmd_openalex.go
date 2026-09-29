@@ -234,3 +234,16 @@ func logOpenAlexErr(s *store.Store, cmd, ref string, err error, d time.Duration)
 		Duration: d.Milliseconds(),
 	})
 }
+
+// checkNoTrailingFlags returns an error naming the first of args that looks
+// like a flag.  The flag package stops at the first operand, so a flag after
+// it would otherwise be read as part of the operand: noun says what the
+// operand is.
+func checkNoTrailingFlags(cmd, noun string, args []string) error {
+	for _, a := range args {
+		if len(a) > 1 && strings.HasPrefix(a, "-") {
+			return fmt.Errorf("%s: flags go before the %s (got %q)", cmd, noun, a)
+		}
+	}
+	return nil
+}
