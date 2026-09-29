@@ -312,7 +312,10 @@ $ paper check -online
 Ranked metadata search over every `paper.json` in the store (matches on key,
 author, title, year, journal/booktitle, DOI, arXiv ID, abstract). Draft
 entries and deprecated versions are flagged in the output. `-json` prints
-machine-readable results instead of one line per hit.
+machine-readable results instead of one line per hit. Each result has
+`key`, `score`, `authors`, `title`, `year`, `holdings`, `status`, `flags` and
+`dir`, the absolute path of the entry's directory, where `paper.json` and the
+held files lie.
 
 ```bash
 $ paper search -json voss

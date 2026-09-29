@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -142,7 +143,7 @@ func runSearch(args []string) error {
 	})
 
 	if *jsonFlag {
-		return printSearchJSON(filtered)
+		return printSearchJSON(s, filtered)
 	}
 	printSearchHuman(filtered)
 	return nil
@@ -158,18 +159,24 @@ type searchResult struct {
 	Holdings string   `json:"holdings"`
 	Status   string   `json:"status"`
 	Flags    []string `json:"flags"`
+	Dir      string   `json:"dir"`
 }
 
 // printSearchJSON writes hits to stdout as a JSON array, in the format
 // documented for "paper search -json": authors and title are decoded to
 // plain unicode text (tex.Decode), and flags carries "draft" plus one
-// "deprecated:<file>" entry per deprecated version.
-func printSearchJSON(hits []store.Hit) error {
+// "deprecated:<file>" entry per deprecated version.  dir is the absolute path
+// of the entry's directory.
+func printSearchJSON(s *store.Store, hits []store.Hit) error {
 	results := make([]searchResult, 0, len(hits))
 	for _, h := range hits {
 		p := h.Paper
 		authors, _ := tex.Decode(p.Bibtex.Fields["author"])
 		title, _ := tex.Decode(p.Bibtex.Fields["title"])
+		dir := s.Dir(p.Key)
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
 		results = append(results, searchResult{
 			Key:      p.Key,
 			Score:    h.Score,
@@ -179,6 +186,7 @@ func printSearchJSON(hits []store.Hit) error {
 			Holdings: p.Holdings,
 			Status:   p.Status,
 			Flags:    hitFlags(p),
+			Dir:      dir,
 		})
 	}
 

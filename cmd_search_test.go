@@ -18,6 +18,8 @@ package main
 
 import (
 	"encoding/json/v2"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,6 +67,70 @@ func TestSearchJSONDecodesAuthor(t *testing.T) {
 	}
 	if !strings.Contains(out, `"Voß, Jochen"`) {
 		t.Errorf("expected decoded author \"Voß, Jochen\" in output:\n%s", out)
+	}
+}
+
+func TestSearchJSONDir(t *testing.T) {
+	s, root := fixtureStore(t)
+	saveSearchFixture(t, s)
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runSearch([]string{"-json", "voss_2004"})
+	})
+	if runErr != nil {
+		t.Fatalf("runSearch: %v", runErr)
+	}
+
+	var results []searchResult
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("unmarshaling -json output: %v\noutput:\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %v, want 1 hit", results)
+	}
+	if want := filepath.Join(root, "voss_2004"); results[0].Dir != want {
+		t.Errorf("dir = %q, want %q", results[0].Dir, want)
+	}
+	if !strings.Contains(out, `"dir":`) {
+		t.Errorf("no dir member in output:\n%s", out)
+	}
+}
+
+// TestSearchJSONDirRelativeRoot checks that dir is absolute even when the
+// store was opened through a relative path.
+func TestSearchJSONDirRelativeRoot(t *testing.T) {
+	s, root := fixtureStore(t)
+	saveSearchFixture(t, s)
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(wd, root)
+	if err != nil || filepath.IsAbs(rel) {
+		t.Skipf("no relative path to %s from %s", root, wd)
+	}
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runSearch([]string{"-store", rel, "-json", "voss_2004"})
+	})
+	if runErr != nil {
+		t.Fatalf("runSearch: %v", runErr)
+	}
+	var results []searchResult
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("unmarshaling -json output: %v\noutput:\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %v, want 1 hit", results)
+	}
+	if !filepath.IsAbs(results[0].Dir) {
+		t.Errorf("dir = %q, want an absolute path", results[0].Dir)
+	}
+	if want := filepath.Join(root, "voss_2004"); results[0].Dir != want {
+		t.Errorf("dir = %q, want %q", results[0].Dir, want)
 	}
 }
 
