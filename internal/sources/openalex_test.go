@@ -326,7 +326,8 @@ func TestWorksByDOIForms(t *testing.T) {
 	})
 	_, err := o.WorksByDOI([]string{
 		"10.1/A", "doi:10.1/b", "DOI:10.1/C", "http://dx.doi.org/10.1/d",
-		"https://dx.doi.org/10.1/e", "http://doi.org/10.1/f", " 10.1/g "})
+		"https://dx.doi.org/10.1/e", "http://doi.org/10.1/f", " 10.1/g ",
+		"", "  ", "doi:", "https://doi.org/"})
 	if err != nil {
 		t.Fatal(err)
 	}

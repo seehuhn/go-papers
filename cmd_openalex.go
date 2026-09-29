@@ -87,6 +87,8 @@ type workLine struct {
 	Held         string // key of the store paper holding the work, or ""
 	CitedByYours int    // related only
 	CitesYours   int    // related only
+	Anchors      *int   // chain only: anchors linked to the work
+	Bib          *int   // chain -bib only: bibliography entries linked to the work
 }
 
 // jsonWork is the JSON form of one workLine.
@@ -104,6 +106,8 @@ type jsonWork struct {
 	Held         string   `json:"held,omitzero"`
 	CitedByYours int      `json:"cited_by_yours,omitzero"`
 	CitesYours   int      `json:"cites_yours,omitzero"`
+	Anchors      *int     `json:"anchors,omitzero"`
+	Bib          *int     `json:"bib,omitzero"`
 }
 
 // toJSONWork converts l to its JSON form. Authors is never nil, so that
@@ -119,6 +123,7 @@ func toJSONWork(l workLine) jsonWork {
 		Authors: authors, Title: w.Title, Venue: w.Venue, Type: w.Type,
 		CitedByCount: w.CitedByCount, Abstract: w.Abstract, Held: l.Held,
 		CitedByYours: l.CitedByYours, CitesYours: l.CitesYours,
+		Anchors: l.Anchors, Bib: l.Bib,
 	}
 }
 
@@ -206,6 +211,12 @@ func workText(l workLine) string {
 	}
 	if l.CitesYours != 0 {
 		fields = append(fields, fmt.Sprintf("cites-yours %d", l.CitesYours))
+	}
+	if l.Anchors != nil {
+		fields = append(fields, fmt.Sprintf("anchors %d", *l.Anchors))
+	}
+	if l.Bib != nil {
+		fields = append(fields, fmt.Sprintf("bib %d", *l.Bib))
 	}
 	if w.DOI != "" {
 		fields = append(fields, "doi:"+w.DOI)

@@ -131,6 +131,19 @@ type bibIdentity struct {
 	titles       []string
 }
 
+// add records the identifiers and the title of r.
+func (b *bibIdentity) add(r relatedEntry) {
+	if r.doi != "" {
+		b.dois[strings.ToLower(r.doi)] = true
+	}
+	if r.arxiv != "" {
+		b.arxivs[normArxiv(r.arxiv)] = true
+	}
+	if r.title != "" {
+		b.titles = append(b.titles, r.title)
+	}
+}
+
 // isCited reports whether w is a work the bibliography cites, in this or
 // another version.
 func (b *bibIdentity) isCited(w *sources.OpenAlexWork) bool {
@@ -151,11 +164,34 @@ func (b *bibIdentity) isCited(w *sources.OpenAlexWork) bool {
 // relatedEntry is one bibliography entry: its key, and the identifiers
 // and title it gives, decoded.
 type relatedEntry struct {
-	key, doi, arxiv, title string
+	key, typ, doi, arxiv, title string
+}
+
+// parseBib reads the bibliography in the file at path. Problems are
+// reported for command cmd: a fatal one is returned, and the others are
+// written to standard error.
+func parseBib(cmd, path string) ([]relatedEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", cmd, err)
+	}
+	defer f.Close()
+	keyed, parseErrs := bibtex.Parse(f)
+	for _, pe := range parseErrs {
+		if pe.Line == 0 {
+			return nil, fmt.Errorf("%s: %s: %s", cmd, path, pe.Msg)
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s:%d: %s\n", cmd, path, pe.Line, pe.Msg)
+	}
+	entries := make([]relatedEntry, len(keyed))
+	for i, ke := range keyed {
+		entries[i] = newRelatedEntry(ke)
+	}
+	return entries, nil
 }
 
 func newRelatedEntry(e bibtex.KeyedEntry) relatedEntry {
-	r := relatedEntry{key: e.Key}
+	r := relatedEntry{key: e.Key, typ: e.Entry.Type}
 	field := func(name string) string {
 		v, _ := tex.Decode(e.Entry.Fields[name])
 		return strings.TrimSpace(v)
@@ -258,17 +294,9 @@ func runRelated(args []string) error {
 	}
 	path := fs.Arg(0)
 
-	f, err := os.Open(path)
+	entries, err := parseBib("related", path)
 	if err != nil {
-		return fmt.Errorf("related: %w", err)
-	}
-	defer f.Close()
-	keyed, parseErrs := bibtex.Parse(f)
-	for _, pe := range parseErrs {
-		if pe.Line == 0 {
-			return fmt.Errorf("related: %s: %s", path, pe.Msg)
-		}
-		fmt.Fprintf(os.Stderr, "related: %s:%d: %s\n", path, pe.Line, pe.Msg)
+		return err
 	}
 
 	s, cfg, err := openStore(*storeFlag)
@@ -292,17 +320,8 @@ func runRelated(args []string) error {
 	nResolved := 0
 	nFailed := 0
 	var lastErr error
-	for _, ke := range keyed {
-		e := newRelatedEntry(ke)
-		if e.doi != "" {
-			ident.dois[strings.ToLower(e.doi)] = true
-		}
-		if e.arxiv != "" {
-			ident.arxivs[normArxiv(e.arxiv)] = true
-		}
-		if e.title != "" {
-			ident.titles = append(ident.titles, e.title)
-		}
+	for _, e := range entries {
+		ident.add(e)
 
 		w, err := resolveEntry(oa, e)
 		if err != nil {
@@ -331,12 +350,12 @@ func runRelated(args []string) error {
 			resolvedIDs = append(resolvedIDs, w.ID)
 			bibKeyOf[w.ID] = e.key
 		}
-		if ke.Entry.Type == "article" && len(w.References) == 0 {
+		if e.typ == "article" && len(w.References) == 0 {
 			logOpenAlex(s, "related", e.key+" "+w.ID, "openalex-no-refs", 0, time.Since(start))
 		}
 	}
 
-	if nFailed == len(keyed) && nFailed > 0 {
+	if nFailed == len(entries) && nFailed > 0 {
 		return fail(lastErr)
 	}
 
@@ -481,7 +500,7 @@ func runRelated(args []string) error {
 		_, err = fmt.Printf("%s\n", data)
 		return err
 	}
-	fmt.Printf("resolved: %d of %d entries\n", nResolved, len(keyed))
+	fmt.Printf("resolved: %d of %d entries\n", nResolved, len(entries))
 	if len(unresolved) > 0 {
 		fmt.Printf("unresolved: %s\n", strings.Join(unresolved, ", "))
 	}

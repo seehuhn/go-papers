@@ -72,8 +72,8 @@ metadata services are given: Unpaywall requires one and refuses to answer
 without it, and Crossref uses it to put requests in its faster,
 better-behaved "polite pool". `openalex_key` is optional: a free OpenAlex
 API key (make an account at openalex.org), used by `discover`, `refs`,
-`citing` and `related`. Without one these commands use OpenAlex's small
-anonymous budget and, once it is spent, fail with a message naming
+`citing`, `related` and `chain`. Without one these commands use OpenAlex's
+small anonymous budget and, once it is spent, fail with a message naming
 `paper init -openalex-key KEY <store dir>`.
 
 Write the file with `paper init` rather than by hand.
@@ -123,8 +123,8 @@ written. Pointing the config at a *different* store is refused unless
 store you already have. `-email` and `-openalex-key` are optional and,
 when omitted, leave any value already configured in place. The OpenAlex
 key is a free API key from an account at openalex.org; `discover`, `refs`,
-`citing` and `related` use it, and without one they fall back to OpenAlex's
-small anonymous budget.
+`citing`, `related` and `chain` use it, and without one they fall back to
+OpenAlex's small anonymous budget.
 
 ### `paper fetch [-dry-run] [-doi <doi>] [-into <key>] <ref>`
 
@@ -257,6 +257,34 @@ references, are recorded in the event log. `-n` limits the number of works
 
 ```bash
 $ paper related -n 10 refs.bib
+```
+
+### `paper chain [-bib <refs.bib>] [-n <count>] [-since <year>] [-short] [-json] <id>...`
+
+Follows the citation graph backward and forward from several papers at
+once. Each `<id>` (an anchor) is an OpenAlex ID, a DOI or an arXiv ID. The
+command takes the works every anchor cites and the works that cite it (the
+200 newest), merges them, and ranks each work by the number of anchors it
+is linked to, then by citation count, so that a work close to several
+anchors is not lost in a long list for one of them. The output begins with
+one `anchor:` line per anchor, giving its work line, the number of
+references resolved and the citing works fetched of those OpenAlex
+reports, then `total: <works>, shown: <listed>` and one line per work in
+the format of `discover`, with an added `anchors <k>`. The anchors
+themselves are never listed. `-since` restricts the citing works only, and
+`-n` limits the number of works (default 100). An anchor OpenAlex does not
+know is reported on stderr and recorded in the event log.
+
+With `-bib`, works the `.bib` file already cites are left out, and each
+work gets a `bib <k>` count, the number of bibliography entries it cites
+or is cited by, which counts towards the ranking. Each entry is looked up
+by DOI (or arXiv DOI), else by title as `related` does, and the line
+`bib: resolved <r> of <m> entries` after the `anchor:` lines says how
+many were found (JSON: a top-level `bib` object with `resolved` and
+`entries`); entries not found are recorded in the event log.
+
+```bash
+$ paper chain -short -n 20 10.1029/2024gl110068 10.1029/2025gl114611
 ```
 
 ### `paper ingest [-since <ts>] [-into <key>] [-doi <doi>] [-arxiv <id>] <file.pdf>...`

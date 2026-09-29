@@ -42,7 +42,7 @@ and never happens silently.
 options:
     -email <address>     contact address to send to Crossref and Unpaywall
     -openalex-key <key>  free OpenAlex API key, used by discover, refs,
-                         citing and related (https://openalex.org)
+                         citing, related and chain (https://openalex.org)
     -force               point the config at a different store than before
 `
 
@@ -64,7 +64,7 @@ func init() {
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	email := fs.String("email", "", "contact address to send to Crossref and Unpaywall")
-	openalexKey := fs.String("openalex-key", "", "free OpenAlex API key, used by discover, refs, citing and related")
+	openalexKey := fs.String("openalex-key", "", "free OpenAlex API key, used by discover, refs, citing, related and chain")
 	force := fs.Bool("force", false, "point the config at a different store than before")
 	fs.Usage = func() { fmt.Fprint(fs.Output(), helpFor("init")) }
 	if err := fs.Parse(args); err != nil {

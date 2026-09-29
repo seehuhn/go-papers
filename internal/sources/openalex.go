@@ -328,17 +328,19 @@ func (o *OpenAlex) Works(ids []string) ([]OpenAlexWork, error) {
 // request. Each DOI may be bare, "doi:"-prefixed, or a doi.org or dx.doi.org
 // URL; case does not matter. The works found are returned in unspecified
 // order, and duplicates are collapsed. A DOI OpenAlex does not know is
-// silently absent.
+// silently absent, and an empty one is skipped.
 func (o *OpenAlex) WorksByDOI(dois []string) ([]OpenAlexWork, error) {
 	found := make(map[string]OpenAlexWork, len(dois))
-	for batch := range slices.Chunk(dois, openAlexBatch) {
-		urls := make([]string, len(batch))
-		for i, d := range batch {
-			d = strings.ToLower(strings.TrimSpace(d))
-			urls[i] = "https://doi.org/" + trimDOIPrefix(d)
+	urls := make([]string, 0, len(dois))
+	for _, d := range dois {
+		d = trimDOIPrefix(strings.ToLower(strings.TrimSpace(d)))
+		if d != "" {
+			urls = append(urls, "https://doi.org/"+d)
 		}
+	}
+	for batch := range slices.Chunk(urls, openAlexBatch) {
 		q := url.Values{}
-		q.Set("filter", "doi:"+strings.Join(urls, "|"))
+		q.Set("filter", "doi:"+strings.Join(batch, "|"))
 		q.Set("per_page", strconv.Itoa(openAlexBatch))
 		var list openAlexList
 		if err := o.get("/works", q, &list); err != nil {
