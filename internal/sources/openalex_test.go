@@ -386,7 +386,8 @@ func TestOpenAlexTwo429s(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 	_, err := o.Work("W1")
-	if err == nil || !strings.Contains(err.Error(), "paper init -openalex-key") {
+	if err == nil || !strings.Contains(err.Error(), "paper init -openalex-key") ||
+		!strings.Contains(err.Error(), "https://openalex.org/rest-api") {
 		t.Errorf("err = %v", err)
 	}
 	if calls != 2 {

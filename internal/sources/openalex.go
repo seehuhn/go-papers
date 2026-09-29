@@ -34,7 +34,7 @@ const openAlexSelect = "id,doi,display_name,publication_year,type,cited_by_count
 	"referenced_works,abstract_inverted_index,authorships,primary_location,locations"
 
 // openAlexKeyHint is appended to errors that a key can cure.
-const openAlexKeyHint = "; get a free key at https://openalex.org/settings/api " +
+const openAlexKeyHint = "; get a free key at https://openalex.org/rest-api " +
 	"and store it with `paper init -openalex-key KEY`"
 
 // openAlexBatch is the most IDs one Works request carries.
