@@ -82,6 +82,37 @@ func TestHeldIndexMatchesDOICaseInsensitively(t *testing.T) {
 	}
 }
 
+func TestHeldIndexOldStyleArxivIDs(t *testing.T) {
+	s, _ := fixtureStore(t)
+	// The store may spell the ID with or without the subject class.
+	p := cleanPaper("with_class")
+	p.DOI = ""
+	p.Arxiv = &store.ArxivRef{ID: "math.PR/0611001"}
+	if err := s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	q := cleanPaper("without_class")
+	q.DOI = ""
+	q.Arxiv = &store.ArxivRef{ID: "hep-th/9901001"}
+	if err := s.Save(q); err != nil {
+		t.Fatal(err)
+	}
+	h, err := loadHeld(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// OpenAlex gives the canonical ID, without the class.
+	for id, want := range map[string]string{
+		"math/0611001":    "with_class",
+		"math.PR/0611001": "with_class",
+		"hep-th/9901001":  "without_class",
+	} {
+		if got := h.key(&sources.OpenAlexWork{ArxivID: id}); got != want {
+			t.Errorf("arXiv %s: held key %q, want %q", id, got, want)
+		}
+	}
+}
+
 func sampleLines() []workLine {
 	return []workLine{
 		{

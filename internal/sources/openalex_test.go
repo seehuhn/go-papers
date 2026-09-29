@@ -82,7 +82,7 @@ func TestRebuildAbstract(t *testing.T) {
 func TestArxivIDFromDOI(t *testing.T) {
 	for _, c := range []struct{ doi, want string }{
 		{"10.48550/arXiv.2412.05039", "2412.05039"},
-		{"10.48550/ARXIV.math.PR/0611001", "math.PR/0611001"},
+		{"10.48550/ARXIV.math/0611001", "math/0611001"},
 		{"10.1080/x", ""},
 	} {
 		if got := ArxivIDFromDOI(c.doi); got != c.want {
@@ -138,7 +138,7 @@ func TestOpenAlexWorkByOpenAlexID(t *testing.T) {
 
 const openAlexArxivWork = `{
   "id": "https://openalex.org/W42",
-  "doi": "https://doi.org/10.48550/arxiv.math.PR/0611001",
+  "doi": "https://doi.org/10.48550/arxiv.math/0611001",
   "display_name": "An old-style preprint",
   "publication_year": 2006,
   "type": "preprint",
@@ -152,7 +152,7 @@ const openAlexArxivWork = `{
 
 func TestOpenAlexWorkByArxiv(t *testing.T) {
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/works/doi:10.48550/arXiv.math.PR/0611001" {
+		if r.URL.Path != "/works/doi:10.48550/arXiv.math/0611001" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		io.WriteString(w, openAlexArxivWork)
@@ -162,7 +162,7 @@ func TestOpenAlexWorkByArxiv(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The DOI wins over the landing page.
-	if w.ArxivID != "math.PR/0611001" {
+	if w.ArxivID != "math/0611001" {
 		t.Errorf("ArxivID = %q", w.ArxivID)
 	}
 	if w.Venue != "" {
@@ -170,10 +170,24 @@ func TestOpenAlexWorkByArxiv(t *testing.T) {
 	}
 }
 
+func TestOpenAlexWorkByArxivDropsSubjectClass(t *testing.T) {
+	for _, id := range []string{"math.PR/0611001", "arXiv:math.PR/0611001v2", "math/0611001"} {
+		o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/works/doi:10.48550/arXiv.math/0611001" {
+				t.Errorf("%s: path = %q", id, r.URL.Path)
+			}
+			io.WriteString(w, openAlexArxivWork)
+		})
+		if _, err := o.Work(id); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+}
+
 func TestOpenAlexArxivFromLandingPage(t *testing.T) {
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, strings.Replace(openAlexArxivWork,
-			`"doi": "https://doi.org/10.48550/arxiv.math.PR/0611001"`, `"doi": null`, 1))
+			`"doi": "https://doi.org/10.48550/arxiv.math/0611001"`, `"doi": null`, 1))
 	})
 	w, err := o.Work("W42")
 	if err != nil {

@@ -41,9 +41,11 @@ func newOpenAlex(cfg *config.Config) *sources.OpenAlex {
 	}
 }
 
-// heldIndex finds the store paper that holds an OpenAlex work. Both maps
-// are keyed by the lower-case identifier: OpenAlex gives DOIs in arbitrary
-// case, and the store's spelling need not agree.
+// heldIndex finds the store paper that holds an OpenAlex work. The DOI map
+// is keyed by the lower-case DOI, and the arXiv map by normArxiv of the ID,
+// which drops the subject class of an old-style ID: OpenAlex gives DOIs in
+// arbitrary case and arXiv IDs in canonical form, and the store's spelling
+// need not agree.
 type heldIndex struct{ byDOI, byArxiv map[string]string }
 
 // loadHeld indexes the DOIs and arXiv IDs of every paper in the store.
@@ -58,7 +60,7 @@ func loadHeld(s *store.Store) (*heldIndex, error) {
 			h.byDOI[strings.ToLower(p.DOI)] = p.Key
 		}
 		if p.Arxiv != nil && p.Arxiv.ID != "" {
-			h.byArxiv[strings.ToLower(p.Arxiv.ID)] = p.Key
+			h.byArxiv[normArxiv(p.Arxiv.ID)] = p.Key
 		}
 	}
 	return h, nil
@@ -72,7 +74,7 @@ func (h *heldIndex) key(w *sources.OpenAlexWork) string {
 		}
 	}
 	if w.ArxivID != "" {
-		if k, ok := h.byArxiv[strings.ToLower(w.ArxivID)]; ok {
+		if k, ok := h.byArxiv[normArxiv(w.ArxivID)]; ok {
 			return k
 		}
 	}

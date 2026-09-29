@@ -107,10 +107,7 @@ func init() {
 // are counted.
 const relatedCitingLimit = 200
 
-var (
-	arxivVersionSuffix = regexp.MustCompile(`v\d+$`)
-	arxivSubjectClass  = regexp.MustCompile(`^([a-z-]+)\.[a-z]{2}/`)
-)
+var arxivVersionSuffix = regexp.MustCompile(`v\d+$`)
 
 // normArxiv folds an arXiv ID for comparison: lower case, no "arXiv:"
 // prefix, no version suffix, and for an old-style ID no subject class
@@ -119,7 +116,7 @@ func normArxiv(id string) string {
 	id = strings.ToLower(strings.TrimSpace(id))
 	id = strings.TrimPrefix(id, "arxiv:")
 	id = arxivVersionSuffix.ReplaceAllString(id, "")
-	return arxivSubjectClass.ReplaceAllString(id, "$1/")
+	return sources.StripArxivClass(id)
 }
 
 // bibIdentity holds what identifies the works of a bibliography, in the
@@ -167,7 +164,7 @@ func newRelatedEntry(e bibtex.KeyedEntry) relatedEntry {
 		}
 	}
 	if ref := sources.ParseRef(arxivIDOf(e.Entry)); ref.Kind == sources.RefArxiv {
-		r.arxiv = ref.ArxivID // the archive class and case stay: OpenAlex needs them
+		r.arxiv = ref.ArxivID // OpenAlex.Work drops the subject class
 	}
 	r.title = field("title")
 	return r

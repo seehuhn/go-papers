@@ -140,8 +140,8 @@ func newRelatedFixture(t *testing.T) *relatedServer {
 	fx := &relatedServer{
 		works: map[string]relatedWork{},
 		byPath: map[string]string{
-			"/works/doi:10.1000/A":                      "W1",
-			"/works/doi:10.48550/arXiv.math.PR/0611001": "W2",
+			"/works/doi:10.1000/A":                   "W1",
+			"/works/doi:10.48550/arXiv.math/0611001": "W2",
 		},
 		byName: map[string]string{
 			"Charlie estimators for sparse models": "W3",

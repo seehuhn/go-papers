@@ -179,6 +179,21 @@ func ArxivIDFromDOI(doi string) string {
 	return doi[len(arxivDOIPrefix):]
 }
 
+var arxivSubjectClass = regexp.MustCompile(`(?i)^([a-z-]+)\.[a-z]{2}/`)
+
+// StripArxivClass removes the subject class from an old-style arXiv ID:
+// "math.PR/0611001" becomes "math/0611001".  Other IDs are unchanged.  The
+// canonical ID is the one arXiv's DataCite DOIs use.
+func StripArxivClass(id string) string {
+	return arxivSubjectClass.ReplaceAllString(id, "$1/")
+}
+
+// ArxivDOI returns the DataCite DOI of an arXiv ID, which is built from the
+// canonical ID without subject class.
+func ArxivDOI(id string) string {
+	return "10.48550/arXiv." + StripArxivClass(id)
+}
+
 // OpenAlex is a client for the OpenAlex API (https://api.openalex.org).
 type OpenAlex struct {
 	BaseURL string // default "https://api.openalex.org"
@@ -251,7 +266,7 @@ func (o *OpenAlex) Work(id string) (*OpenAlexWork, error) {
 		case RefDOI:
 			path = "/works/doi:" + escapeDOIPath(ref.DOI)
 		case RefArxiv:
-			path = "/works/doi:" + escapeDOIPath("10.48550/arXiv."+ref.ArxivID)
+			path = "/works/doi:" + escapeDOIPath(ArxivDOI(ref.ArxivID))
 		default:
 			return nil, fmt.Errorf("openalex: %q is not an OpenAlex ID, DOI or arXiv ID", id)
 		}
