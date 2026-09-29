@@ -139,7 +139,11 @@ func openAlexShortID(id string) string {
 }
 
 func trimDOIPrefix(doi string) string {
-	for _, p := range []string{"https://doi.org/", "http://doi.org/"} {
+	for _, p := range []string{
+		"https://doi.org/", "http://doi.org/",
+		"https://dx.doi.org/", "http://dx.doi.org/",
+		"doi:",
+	} {
 		if s, ok := strings.CutPrefix(doi, p); ok {
 			return s
 		}
@@ -316,6 +320,39 @@ func (o *OpenAlex) Works(ids []string) ([]OpenAlexWork, error) {
 		if w, ok := found[openAlexShortID(id)]; ok {
 			out = append(out, w)
 		}
+	}
+	return out, nil
+}
+
+// WorksByDOI fetches the works with the given DOIs, openAlexBatch per
+// request. Each DOI may be bare, "doi:"-prefixed, or a doi.org or dx.doi.org
+// URL; case does not matter. The works found are returned in unspecified
+// order, and duplicates are collapsed. A DOI OpenAlex does not know is
+// silently absent.
+func (o *OpenAlex) WorksByDOI(dois []string) ([]OpenAlexWork, error) {
+	found := make(map[string]OpenAlexWork, len(dois))
+	for batch := range slices.Chunk(dois, openAlexBatch) {
+		urls := make([]string, len(batch))
+		for i, d := range batch {
+			d = strings.ToLower(strings.TrimSpace(d))
+			urls[i] = "https://doi.org/" + trimDOIPrefix(d)
+		}
+		q := url.Values{}
+		q.Set("filter", "doi:"+strings.Join(urls, "|"))
+		q.Set("per_page", strconv.Itoa(openAlexBatch))
+		var list openAlexList
+		if err := o.get("/works", q, &list); err != nil {
+			return nil, err
+		}
+		for i := range list.Results {
+			w := list.Results[i].work()
+			found[w.ID] = w
+		}
+	}
+
+	out := make([]OpenAlexWork, 0, len(found))
+	for _, w := range found {
+		out = append(out, w)
 	}
 	return out, nil
 }

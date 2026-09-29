@@ -257,6 +257,86 @@ func TestOpenAlexWorksBatches(t *testing.T) {
 	}
 }
 
+func TestWorksByDOIBatches(t *testing.T) {
+	var dois []string
+	for i := 1; i <= 50; i++ {
+		dois = append(dois, fmt.Sprintf("10.1234/x%d", i))
+	}
+	dois[0] = "10.1234/UPPER"
+	dois = append(dois, "https://doi.org/10.1/x")
+
+	var filters []string
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/works" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if q.Get("per_page") != "50" {
+			t.Errorf("per_page = %q", q.Get("per_page"))
+		}
+		filters = append(filters, q.Get("filter"))
+		io.WriteString(w, oaListJSON(2,
+			`{"id":"https://openalex.org/W1","doi":"https://doi.org/10.1234/upper"}`,
+			`{"id":"https://openalex.org/W2","doi":"https://doi.org/10.1234/x2"}`))
+	})
+	got, err := o.WorksByDOI(dois)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 2 {
+		t.Fatalf("got %d requests, want 2", len(filters))
+	}
+	var sizes []int
+	for _, f := range filters {
+		list, ok := strings.CutPrefix(f, "doi:")
+		if !ok {
+			t.Fatalf("filter = %q", f)
+		}
+		parts := strings.Split(list, "|")
+		sizes = append(sizes, len(parts))
+		for _, d := range parts {
+			rest, ok := strings.CutPrefix(d, "https://doi.org/")
+			if !ok || rest != strings.ToLower(rest) {
+				t.Errorf("DOI %q not lower-case with https://doi.org/ prefix", d)
+			}
+		}
+	}
+	if !slices.Equal(sizes, []int{50, 1}) {
+		t.Errorf("batch sizes = %v", sizes)
+	}
+	if !strings.HasPrefix(filters[0], "doi:https://doi.org/10.1234/upper|") {
+		t.Errorf("first filter = %q", filters[0])
+	}
+	if n := strings.Count(strings.Join(filters, "|"), "https://doi.org/10.1/x"); n != 1 {
+		t.Errorf("https://doi.org/10.1/x appears %d times in the filters, want 1: %q", n, filters)
+	}
+	if strings.Contains(strings.Join(filters, "|"), "doi.org/https:") {
+		t.Errorf("prefix doubled in %q", filters)
+	}
+	if len(got) != 2 {
+		t.Errorf("got %d works, want 2", len(got))
+	}
+}
+
+func TestWorksByDOIForms(t *testing.T) {
+	var filter string
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		filter = r.URL.Query().Get("filter")
+		io.WriteString(w, oaListJSON(0))
+	})
+	_, err := o.WorksByDOI([]string{
+		"10.1/A", "doi:10.1/b", "DOI:10.1/C", "http://dx.doi.org/10.1/d",
+		"https://dx.doi.org/10.1/e", "http://doi.org/10.1/f", " 10.1/g "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "doi:https://doi.org/10.1/a|https://doi.org/10.1/b|https://doi.org/10.1/c|" +
+		"https://doi.org/10.1/d|https://doi.org/10.1/e|https://doi.org/10.1/f|https://doi.org/10.1/g"
+	if filter != want {
+		t.Errorf("filter = %q, want %q", filter, want)
+	}
+}
+
 func TestOpenAlexSearchQuery(t *testing.T) {
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
