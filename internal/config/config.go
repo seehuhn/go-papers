@@ -43,6 +43,11 @@ type Config struct {
 	// Email is the contact address sent to Crossref and Unpaywall. It is
 	// optional, but Unpaywall refuses to answer without it.
 	Email string `json:"email,omitzero"`
+
+	// OpenAlexKey is the free OpenAlex API key, sent as the api_key query
+	// parameter. It is optional: anonymous requests work but are
+	// rate-limited more tightly.
+	OpenAlexKey string `json:"openalex_key,omitzero"`
 }
 
 // Path returns the location of the config file: the value of $PAPER_CONFIG
@@ -77,7 +82,7 @@ func Load(path string) (*Config, error) {
 
 // Save writes c to path, creating the parent directory if needed. The
 // write is atomic and the file is readable only by its owner, since it
-// holds an email address.
+// holds an email address and an API key.
 func (c *Config) Save(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

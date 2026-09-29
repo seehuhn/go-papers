@@ -196,3 +196,40 @@ func TestInitNeedsExactlyOneDirectory(t *testing.T) {
 		t.Error("init with two directories should fail")
 	}
 }
+
+func TestInitSetsOpenAlexKey(t *testing.T) {
+	cfgPath := noConfig(t)
+	dir := filepath.Join(t.TempDir(), "Papers")
+
+	runInitQuiet := func(args ...string) {
+		t.Helper()
+		captureStdout(t, func() {
+			if err := runInit(args); err != nil {
+				t.Fatalf("init %v: %v", args, err)
+			}
+		})
+	}
+	key := func() string {
+		t.Helper()
+		cfg, err := config.Load(cfgPath)
+		if err != nil {
+			t.Fatalf("loading the config: %v", err)
+		}
+		return cfg.OpenAlexKey
+	}
+
+	runInitQuiet("-openalex-key", "k123", dir)
+	if got := key(); got != "k123" {
+		t.Errorf("after the first init: OpenAlexKey = %q, want %q", got, "k123")
+	}
+
+	runInitQuiet(dir)
+	if got := key(); got != "k123" {
+		t.Errorf("an omitted flag should keep the key: OpenAlexKey = %q, want %q", got, "k123")
+	}
+
+	runInitQuiet("-openalex-key", "k456", dir)
+	if got := key(); got != "k456" {
+		t.Errorf("a new key should replace the old without -force: OpenAlexKey = %q, want %q", got, "k456")
+	}
+}

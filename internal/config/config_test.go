@@ -124,3 +124,43 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 		t.Errorf("error %q should name the file %q", err, path)
 	}
 }
+
+func TestConfigOpenAlexKeyRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := &Config{Store: "/papers", OpenAlexKey: "k123"}
+
+	if err := want.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.OpenAlexKey != "k123" {
+		t.Errorf("OpenAlexKey = %q, want %q", got.OpenAlexKey, "k123")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the file: %v", err)
+	}
+	// Save indents its output, so compare without whitespace.
+	compact := strings.NewReplacer(" ", "", "\n", "").Replace(string(data))
+	if !strings.Contains(compact, `"openalex_key":"k123"`) {
+		t.Errorf("the file should contain the key as openalex_key:\n%s", data)
+	}
+}
+
+func TestSaveOmitsAnEmptyOpenAlexKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := (&Config{Store: "/papers"}).Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the file: %v", err)
+	}
+	if strings.Contains(string(data), "openalex_key") {
+		t.Errorf("an unset key should be omitted:\n%s", data)
+	}
+}

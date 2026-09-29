@@ -40,8 +40,10 @@ config at a different store than it already names requires -force,
 and never happens silently.
 
 options:
-    -email <address>  contact address to send to Crossref and Unpaywall
-    -force            point the config at a different store than before
+    -email <address>     contact address to send to Crossref and Unpaywall
+    -openalex-key <key>  free OpenAlex API key, used by discover, refs,
+                         citing and related (https://openalex.org)
+    -force               point the config at a different store than before
 `
 
 func init() {
@@ -62,6 +64,7 @@ func init() {
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	email := fs.String("email", "", "contact address to send to Crossref and Unpaywall")
+	openalexKey := fs.String("openalex-key", "", "free OpenAlex API key, used by discover, refs, citing and related")
 	force := fs.Bool("force", false, "point the config at a different store than before")
 	fs.Usage = func() { fmt.Fprint(fs.Output(), helpFor("init")) }
 	if err := fs.Parse(args); err != nil {
@@ -71,7 +74,7 @@ func runInit(args []string) error {
 		return fmt.Errorf("init: parsing arguments: %w", err)
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("init: usage: paper init [-email <address>] [-force] <dir>")
+		return fmt.Errorf("init: usage: paper init [-email <address>] [-openalex-key <key>] [-force] <dir>")
 	}
 
 	root, err := filepath.Abs(fs.Arg(0))
@@ -113,6 +116,9 @@ func runInit(args []string) error {
 	cfg.Store = root
 	if *email != "" {
 		cfg.Email = *email
+	}
+	if *openalexKey != "" {
+		cfg.OpenAlexKey = *openalexKey
 	}
 	if err := cfg.Save(cfgPath); err != nil {
 		return fmt.Errorf("init: %w", err)
