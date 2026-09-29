@@ -21,22 +21,25 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
+
+	"seehuhn.de/go/paper/internal/sources"
 )
 
-const discoverHelp = `usage: paper discover [options] <query> ...
+const citingHelp = `usage: paper citing [options] <id>
 
-Search OpenAlex for works on a topic, to find literature the store does
-not hold yet. The words of the query are joined and matched against
-titles, abstracts and other text. The store is only read, never changed
-(apart from the event log).
+List the works that cite a paper, newest first, according to OpenAlex, to
+see what has been built on a result. <id> is an OpenAlex ID (W...), a
+DOI or an arXiv ID. The store is only read, never changed (apart from
+the event log).
 
 Plain output starts with the line
 
-    total: <matches>, shown: <listed>
+    total: <citing works>, shown: <listed>
 
-followed by one line per work, most relevant first:
+followed by one line per work, newest first:
 
     <id> | <year> | <surname> | <title> | <venue> | cited <n> | doi:<doi> | arxiv:<id> | held:<key>
 
@@ -52,7 +55,7 @@ cited_by_count, abstract and held. Only doi, arxiv, venue, abstract and
 held are left out when empty; -short also drops abstract.
 
 options:
-    -n <count>    list at most <count> works (default 25, at most 200)
+    -n <count>    list at most <count> works (default 50, at most 200)
     -since <year> only works published in <year> or later
     -short        leave out the abstracts
     -json         print the result as JSON
@@ -64,18 +67,20 @@ Anonymous OpenAlex requests are rate limited; a free key stored with
 
 func init() {
 	commands = append(commands, command{
-		name: "discover",
-		desc: "search OpenAlex for literature on a topic",
-		help: discoverHelp,
-		run:  runDiscover,
+		name: "citing",
+		desc: "list the works that cite a paper, according to OpenAlex",
+		help: citingHelp,
+		run:  runCiting,
 	})
 }
 
-// runDiscover implements "paper discover": a full-text OpenAlex search
-// whose results are marked with the store papers that already hold them.
-func runDiscover(args []string) error {
-	fs, storeFlag := newFlagSet("discover")
-	n := fs.Int("n", 25, "list at most this many works")
+var openAlexWorkID = regexp.MustCompile(`^W\d+$`)
+
+// runCiting implements "paper citing": the works that cite one work,
+// newest first, marked with the store papers that already hold them.
+func runCiting(args []string) error {
+	fs, storeFlag := newFlagSet("citing")
+	n := fs.Int("n", 50, "list at most this many works")
 	since := fs.Int("since", 0, "only works published in this year or later")
 	short := fs.Bool("short", false, "leave out the abstracts")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
@@ -83,32 +88,47 @@ func runDiscover(args []string) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return fmt.Errorf("discover: parsing arguments: %w", err)
+		return fmt.Errorf("citing: parsing arguments: %w", err)
 	}
-
-	query := strings.Join(fs.Args(), " ")
-	if strings.TrimSpace(query) == "" {
-		return fmt.Errorf("discover: no query given; supply the words to search for")
+	if fs.NArg() != 1 {
+		return fmt.Errorf("citing: expected exactly one ID (OpenAlex ID, DOI or arXiv ID), got %d arguments", fs.NArg())
 	}
 	if *n < 1 {
-		return fmt.Errorf("discover: -n must be at least 1, got %d", *n)
+		return fmt.Errorf("citing: -n must be at least 1, got %d", *n)
 	}
+	id := fs.Arg(0)
 
 	s, cfg, err := openStore(*storeFlag)
 	if err != nil {
-		return fmt.Errorf("discover: %w", err)
+		return fmt.Errorf("citing: %w", err)
 	}
 
 	start := time.Now()
-	works, total, err := newOpenAlex(cfg).Search(query, *n, *since)
+	oa := newOpenAlex(cfg)
+	workID := strings.TrimPrefix(strings.TrimSpace(id), "https://openalex.org/")
+	if !openAlexWorkID.MatchString(workID) {
+		work, err := oa.Work(id)
+		if errors.Is(err, sources.ErrNotFound) {
+			err = wrapOutcome("openalex-unknown", fmt.Errorf("citing: OpenAlex does not know %s", id))
+			logOpenAlexErr(s, "citing", id, err, time.Since(start))
+			return err
+		}
+		if err != nil {
+			logOpenAlexErr(s, "citing", id, err, time.Since(start))
+			return fmt.Errorf("citing: %w", err)
+		}
+		workID = work.ID
+	}
+
+	works, total, err := oa.Citing(workID, *n, *since)
 	if err != nil {
-		logOpenAlexErr(s, "discover", query, err, time.Since(start))
-		return fmt.Errorf("discover: %w", err)
+		logOpenAlexErr(s, "citing", id, err, time.Since(start))
+		return fmt.Errorf("citing: %w", err)
 	}
 
 	held, err := loadHeld(s)
 	if err != nil {
-		return fmt.Errorf("discover: %w", err)
+		return fmt.Errorf("citing: %w", err)
 	}
 	lines := make([]workLine, len(works))
 	for i := range works {
@@ -119,7 +139,7 @@ func runDiscover(args []string) error {
 	if len(works) == 0 {
 		outcome = "no-hits"
 	}
-	logOpenAlex(s, "discover", query, outcome, len(works), time.Since(start))
+	logOpenAlex(s, "citing", id, outcome, len(works), time.Since(start))
 
 	return printWorks(os.Stdout, total, lines, *short, *asJSON)
 }

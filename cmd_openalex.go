@@ -125,11 +125,27 @@ func toJSONWork(l workLine) jsonWork {
 // line followed by one line per work and, unless short is set, an
 // indented abstract line. short also drops the abstract from the JSON.
 func printWorks(w io.Writer, total int, lines []workLine, short, asJSON bool) error {
+	return printWorksOf(w, nil, total, lines, short, asJSON)
+}
+
+// printWorksOf is printWorks for a list that belongs to one work, head.
+// A non-nil head is written first: as a line "work: <work line>" before
+// the header line, or as the "work" member of the JSON object. It has no
+// abstract line.
+func printWorksOf(w io.Writer, head *workLine, total int, lines []workLine, short, asJSON bool) error {
 	if asJSON {
 		out := struct {
+			Work  *jsonWork  `json:"work,omitzero"`
 			Total int        `json:"total"`
 			Works []jsonWork `json:"works"`
 		}{Total: total, Works: make([]jsonWork, len(lines))}
+		if head != nil {
+			jw := toJSONWork(*head)
+			if short {
+				jw.Abstract = ""
+			}
+			out.Work = &jw
+		}
 		for i, l := range lines {
 			out.Works[i] = toJSONWork(l)
 			if short {
@@ -144,6 +160,9 @@ func printWorks(w io.Writer, total int, lines []workLine, short, asJSON bool) er
 		return err
 	}
 
+	if head != nil {
+		fmt.Fprintf(w, "work: %s\n", workText(*head))
+	}
 	fmt.Fprintf(w, "total: %d, shown: %d\n", total, len(lines))
 	for _, l := range lines {
 		fmt.Fprintln(w, workText(l))
@@ -199,6 +218,19 @@ func logOpenAlex(s *store.Store, cmd, ref, outcome string, hits int, d time.Dura
 		Source:   "openalex",
 		Outcome:  outcome,
 		Hits:     hits,
+		Duration: d.Milliseconds(),
+	})
+}
+
+// logOpenAlexErr records a failed OpenAlex command in the event log. The
+// outcome is that of err (see eventOutcome) and the detail its first line.
+func logOpenAlexErr(s *store.Store, cmd, ref string, err error, d time.Duration) {
+	s.LogEvent(store.Event{
+		Command:  cmd,
+		Ref:      ref,
+		Source:   "openalex",
+		Outcome:  eventOutcome(err),
+		Detail:   eventDetail(err),
 		Duration: d.Milliseconds(),
 	})
 }
