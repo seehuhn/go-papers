@@ -103,9 +103,11 @@ func runDiscover(args []string) error {
 	}
 
 	start := time.Now()
-	works, total, err := newOpenAlex(cfg).Search(query, *n, *since)
+	oa := newOpenAlex(cfg)
+	defer warnLowBudget(os.Stderr, oa)
+	works, total, err := oa.Search(query, *n, *since)
 	if err != nil {
-		logOpenAlexErr(s, "discover", query, err, time.Since(start))
+		logOpenAlexErr(s, oa, "discover", query, err, time.Since(start))
 		return fmt.Errorf("discover: %w", err)
 	}
 
@@ -122,7 +124,7 @@ func runDiscover(args []string) error {
 	if len(works) == 0 {
 		outcome = "no-hits"
 	}
-	logOpenAlex(s, "discover", query, outcome, len(works), time.Since(start))
+	logOpenAlex(s, oa, "discover", query, outcome, len(works), time.Since(start))
 
 	return printWorks(os.Stdout, total, lines, *short, *asJSON)
 }

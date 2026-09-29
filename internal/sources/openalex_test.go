@@ -596,3 +596,120 @@ func TestOpenAlex401KeyRejected(t *testing.T) {
 		t.Errorf("no key: err = %v", err)
 	}
 }
+
+func TestOpenAlexRecordsCost(t *testing.T) {
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Credits-Used", "0.001")
+		w.Header().Set("X-RateLimit-Remaining", "0.42")
+		w.Header().Set("X-RateLimit-Limit", "1")
+		io.WriteString(w, openAlexHoeffding)
+	})
+	if _, _, ok := o.LastCost(); ok {
+		t.Error("LastCost ok before any request")
+	}
+	if _, err := o.Work("W2100837269"); err != nil {
+		t.Fatal(err)
+	}
+	credits, remaining, ok := o.LastCost()
+	if !ok || credits != 0.001 || remaining != 0.42 {
+		t.Errorf("LastCost = %v, %v, %v; want 0.001, 0.42, true", credits, remaining, ok)
+	}
+	if got := o.LastLimit(); got != 1 {
+		t.Errorf("LastLimit = %v, want 1", got)
+	}
+}
+
+func TestOpenAlexCostSumsCredits(t *testing.T) {
+	calls := 0
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		credits, remaining := "0.001", "0.42"
+		if calls == 2 {
+			credits, remaining = "0.0001", "0.4189"
+		}
+		w.Header().Set("X-RateLimit-Credits-Used", credits)
+		w.Header().Set("X-RateLimit-Remaining", remaining)
+		io.WriteString(w, openAlexHoeffding)
+	})
+	for range 2 {
+		if _, err := o.Work("W1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	credits, remaining, ok := o.LastCost()
+	if !ok || credits != 0.0011 || remaining != 0.4189 {
+		t.Errorf("LastCost = %v, %v, %v; want 0.0011, 0.4189, true", credits, remaining, ok)
+	}
+}
+
+func TestOpenAlexCostAbsentOrMalformed(t *testing.T) {
+	calls := 0
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("X-RateLimit-Remaining", "0.42")
+		}
+		w.Header().Set("X-RateLimit-Credits-Used", "lots")
+		io.WriteString(w, openAlexHoeffding)
+	})
+	for range 2 {
+		if _, err := o.Work("W1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c, r, ok := o.LastCost(); ok {
+		t.Errorf("LastCost = %v, %v, true without a usable credits header", c, r)
+	}
+	if got := o.LastLimit(); got != 0 {
+		t.Errorf("LastLimit = %v, want 0 when the header is absent", got)
+	}
+}
+
+func TestBudget429Message(t *testing.T) {
+	calls := 0
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":"Rate limit exceeded","message":"Insufficient Budget for this request"}`)
+	})
+	o.Key = openAlexSecret
+	_, err := o.Work("W1")
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if !strings.HasSuffix(err.Error(), "the budget resets at midnight UTC.") {
+		t.Errorf("error does not end with the reset sentence: %v", err)
+	}
+	for _, bad := range []string{openAlexSecret, "get a free key", "paper init"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("error contains %q: %v", bad, err)
+		}
+	}
+	var se *StatusError
+	if !errors.As(err, &se) || se.Code != http.StatusTooManyRequests {
+		t.Errorf("error does not wrap the StatusError: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d; a budget 429 must not be retried", calls)
+	}
+	if c, ok := o.Spent(); ok {
+		t.Errorf("Spent = %v, true although the credits header was absent", c)
+	}
+	if r, ok := o.Remaining(); !ok || r != 0 {
+		t.Errorf("Remaining = %v, %v; want 0, true", r, ok)
+	}
+}
+
+func TestOpenAlexRateLimit429KeepsHint(t *testing.T) {
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"message":"slow down"}`)
+	})
+	o.Key = ""
+	_, err := o.Work("W1")
+	if err == nil || !strings.Contains(err.Error(), "get a free key") ||
+		strings.Contains(err.Error(), "midnight") {
+		t.Errorf("err = %v", err)
+	}
+}

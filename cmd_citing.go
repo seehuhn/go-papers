@@ -108,16 +108,17 @@ func runCiting(args []string) error {
 
 	start := time.Now()
 	oa := newOpenAlex(cfg)
+	defer warnLowBudget(os.Stderr, oa)
 	workID := strings.TrimPrefix(strings.TrimSpace(id), "https://openalex.org/")
 	if !openAlexWorkID.MatchString(workID) {
 		work, err := oa.Work(id)
 		if errors.Is(err, sources.ErrNotFound) {
 			err = wrapOutcome("openalex-unknown", fmt.Errorf("citing: OpenAlex does not know %s", id))
-			logOpenAlexErr(s, "citing", id, err, time.Since(start))
+			logOpenAlexErr(s, oa, "citing", id, err, time.Since(start))
 			return err
 		}
 		if err != nil {
-			logOpenAlexErr(s, "citing", id, err, time.Since(start))
+			logOpenAlexErr(s, oa, "citing", id, err, time.Since(start))
 			return fmt.Errorf("citing: %w", err)
 		}
 		workID = work.ID
@@ -125,7 +126,7 @@ func runCiting(args []string) error {
 
 	works, total, err := oa.Citing(workID, *n, *since)
 	if err != nil {
-		logOpenAlexErr(s, "citing", id, err, time.Since(start))
+		logOpenAlexErr(s, oa, "citing", id, err, time.Since(start))
 		return fmt.Errorf("citing: %w", err)
 	}
 
@@ -142,7 +143,7 @@ func runCiting(args []string) error {
 	if len(works) == 0 {
 		outcome = "no-hits"
 	}
-	logOpenAlex(s, "citing", id, outcome, len(works), time.Since(start))
+	logOpenAlex(s, oa, "citing", id, outcome, len(works), time.Since(start))
 
 	return printWorks(os.Stdout, total, lines, *short, *asJSON)
 }

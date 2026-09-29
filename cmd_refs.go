@@ -111,14 +111,15 @@ func runRefs(args []string) error {
 
 	start := time.Now()
 	oa := newOpenAlex(cfg)
+	defer warnLowBudget(os.Stderr, oa)
 	work, err := oa.Work(id)
 	if errors.Is(err, sources.ErrNotFound) {
 		err = wrapOutcome("openalex-unknown", fmt.Errorf("refs: OpenAlex does not know %s", id))
-		logOpenAlexErr(s, "refs", id, err, time.Since(start))
+		logOpenAlexErr(s, oa, "refs", id, err, time.Since(start))
 		return err
 	}
 	if err != nil {
-		logOpenAlexErr(s, "refs", id, err, time.Since(start))
+		logOpenAlexErr(s, oa, "refs", id, err, time.Since(start))
 		return fmt.Errorf("refs: %w", err)
 	}
 
@@ -126,7 +127,7 @@ func runRefs(args []string) error {
 	if len(work.References) > 0 {
 		works, err = oa.Works(work.References)
 		if err != nil {
-			logOpenAlexErr(s, "refs", id, err, time.Since(start))
+			logOpenAlexErr(s, oa, "refs", id, err, time.Since(start))
 			return fmt.Errorf("refs: %w", err)
 		}
 	}
@@ -149,7 +150,7 @@ func runRefs(args []string) error {
 	case len(works) == 0:
 		outcome = "no-hits"
 	}
-	logOpenAlex(s, "refs", id, outcome, len(works), time.Since(start))
+	logOpenAlex(s, oa, "refs", id, outcome, len(works), time.Since(start))
 
 	err = printWorksOf(os.Stdout, &head, len(work.References), lines, *short, *asJSON)
 	if err == nil && noRefs && !*asJSON {

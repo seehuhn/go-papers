@@ -195,11 +195,12 @@ func runChain(args []string) error {
 
 	start := time.Now()
 	ref := strings.Join(ids, " ")
+	oa := newOpenAlex(cfg)
+	defer warnLowBudget(os.Stderr, oa)
 	fail := func(err error) error {
-		logOpenAlexErr(s, "chain", ref, err, time.Since(start))
+		logOpenAlexErr(s, oa, "chain", ref, err, time.Since(start))
 		return fmt.Errorf("chain: %w", err)
 	}
-	oa := newOpenAlex(cfg)
 	held, err := loadHeld(s)
 	if err != nil {
 		return fmt.Errorf("chain: %w", err)
@@ -213,7 +214,7 @@ func runChain(args []string) error {
 		a, err := oa.Work(id)
 		if errors.Is(err, sources.ErrNotFound) {
 			fmt.Fprintf(os.Stderr, "anchor not found: %s\n", id)
-			logOpenAlexErr(s, "chain", id,
+			logOpenAlexErr(s, oa, "chain", id,
 				wrapOutcome("openalex-unknown", fmt.Errorf("OpenAlex does not know %s", id)), time.Since(start))
 			continue
 		}
@@ -298,7 +299,7 @@ func runChain(args []string) error {
 	if len(lines) == 0 {
 		outcome = "no-hits"
 	}
-	logOpenAlex(s, "chain", ref, outcome, len(lines), time.Since(start))
+	logOpenAlex(s, oa, "chain", ref, outcome, len(lines), time.Since(start))
 
 	if *asJSON {
 		out := struct {
@@ -398,16 +399,9 @@ func countBibLinks(oa *sources.OpenAlex, s *store.Store, start time.Time,
 		w, err := resolveEntry(oa, e)
 		switch {
 		case err != nil:
-			s.LogEvent(store.Event{
-				Command:  "chain",
-				Ref:      e.ref(),
-				Source:   "openalex",
-				Outcome:  "openalex-unresolved",
-				Detail:   eventDetail(err),
-				Duration: time.Since(start).Milliseconds(),
-			})
+			logOpenAlexErr(s, oa, "chain", e.ref(), wrapOutcome("openalex-unresolved", err), time.Since(start))
 		case w == nil:
-			logOpenAlex(s, "chain", e.ref(), "openalex-unresolved", 0, time.Since(start))
+			logOpenAlex(s, oa, "chain", e.ref(), "openalex-unresolved", 0, time.Since(start))
 		default:
 			addBib(w)
 			resolved++

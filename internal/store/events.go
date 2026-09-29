@@ -44,6 +44,11 @@ type Event struct {
 	Hits     int    `json:"hits,omitzero"`   // search result count (outcome "no-hits" marks zero)
 	Duration int64  `json:"duration_ms,omitzero"`
 	Detail   string `json:"detail,omitzero"` // first line of the error, for outcomes other than "ok"
+
+	// OpenAlex commands only, from the rate limit headers; nil when the
+	// headers were absent.
+	Credits   *float64 `json:"credits,omitzero"`   // dollars the command's requests cost
+	Remaining *float64 `json:"remaining,omitzero"` // dollars left of the day's budget
 }
 
 // LogEvent appends e as one JSON line to events/<hostname>.jsonl under the

@@ -19,6 +19,7 @@ package sources
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -26,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -205,7 +207,101 @@ type OpenAlex struct {
 	Key     string              // api_key parameter; may be empty
 	Email   string              // User-Agent only
 	Sleep   func(time.Duration) // nil means time.Sleep; tests stub it
+
+	mu   sync.Mutex
+	cost openAlexCost // from the responses so far
 }
+
+// openAlexCost holds what the rate limit headers of the responses so far
+// said: the credits summed over all of them, and the latest remaining and
+// limit values.
+type openAlexCost struct {
+	credits, remaining, limit float64
+	hasCredits, hasRemaining  bool
+	hasLimit                  bool
+}
+
+// headerFloat reads a numeric header; a missing or malformed one gives false.
+func headerFloat(h http.Header, name string) (float64, bool) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(h.Get(name)), 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return v, true
+}
+
+// record adds the cost headers of a response to the totals. Credits are
+// summed; remaining and limit are replaced when the response carries them.
+func (o *OpenAlex) record(h http.Header) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if v, ok := headerFloat(h, "X-RateLimit-Credits-Used"); ok {
+		o.cost.credits += v
+		o.cost.hasCredits = true
+	}
+	if v, ok := headerFloat(h, "X-RateLimit-Remaining"); ok {
+		o.cost.remaining, o.cost.hasRemaining = v, true
+	}
+	if v, ok := headerFloat(h, "X-RateLimit-Limit"); ok {
+		o.cost.limit, o.cost.hasLimit = v, true
+	}
+}
+
+// Spent returns the credits (dollars) the requests of this client have used
+// so far, summed from X-RateLimit-Credits-Used over every response. ok is
+// false until a response has carried the header; a malformed header counts
+// as absent.
+func (o *OpenAlex) Spent() (credits float64, ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	// Rounding hides the noise of summing binary fractions.
+	return math.Round(o.cost.credits*1e12) / 1e12, o.cost.hasCredits
+}
+
+// Remaining returns the budget left for the day as of the latest response
+// that carried X-RateLimit-Remaining. ok is false if none did.
+func (o *OpenAlex) Remaining() (remaining float64, ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.cost.remaining, o.cost.hasRemaining
+}
+
+// LastCost returns Spent and Remaining together; ok is true only if both are
+// known.
+func (o *OpenAlex) LastCost() (credits, remaining float64, ok bool) {
+	credits, ok1 := o.Spent()
+	remaining, ok2 := o.Remaining()
+	return credits, remaining, ok1 && ok2
+}
+
+// LastLimit returns the day's budget from the latest response that gave
+// X-RateLimit-Limit, or 0 if none did.
+func (o *OpenAlex) LastLimit() float64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.cost.hasLimit {
+		return 0
+	}
+	return o.cost.limit
+}
+
+// budgetExhausted reports whether se is a 429 that says the day's budget is
+// used up, as opposed to a momentary rate limit.
+func budgetExhausted(se *StatusError) bool {
+	return se.Code == http.StatusTooManyRequests &&
+		strings.Contains(strings.ToLower(se.Snippet), "budget")
+}
+
+// budgetError is the error for an exhausted day's budget. Its text names no
+// key and no URL; Unwrap gives the *StatusError.
+type budgetError struct{ se *StatusError }
+
+func (e *budgetError) Error() string {
+	return "openalex: HTTP 429: the day's budget is used up and further requests fail until " +
+		"the budget resets at midnight UTC."
+}
+
+func (e *budgetError) Unwrap() error { return e.se }
 
 func (o *OpenAlex) baseURL() string {
 	if o.BaseURL == "" {
@@ -216,7 +312,9 @@ func (o *OpenAlex) baseURL() string {
 
 // get fetches path?q and decodes the JSON reply into out. It adds select and
 // api_key, waits and retries once on HTTP 429, and turns a second 429 or a
-// 401 into an error that names the key setting.  The URLs in errors show
+// 401 into an error that names the key setting.  A 429 that says the day's
+// budget is used up is not retried and gives a budgetError.  Every response
+// updates LastCost.  The URLs in errors show
 // api_key=REDACTED, so that the key does not reach logs.
 func (o *OpenAlex) get(path string, q url.Values, out any) error {
 	q.Set("select", openAlexSelect)
@@ -228,10 +326,13 @@ func (o *OpenAlex) get(path string, q url.Values, out any) error {
 		q.Set("api_key", "REDACTED")
 		shown = base + q.Encode()
 	}
-	opt := httpOptions{Email: o.Email, ShownURL: shown}
+	opt := httpOptions{Email: o.Email, ShownURL: shown, OnResponse: o.record}
 
 	err := getJSON(o.Client, u, opt, out)
 	var se *StatusError
+	if errors.As(err, &se) && budgetExhausted(se) {
+		return &budgetError{se}
+	}
 	if errors.As(err, &se) && se.Code == http.StatusTooManyRequests {
 		wait := se.RetryAfter
 		if wait <= 0 {
@@ -244,6 +345,9 @@ func (o *OpenAlex) get(path string, q url.Values, out any) error {
 			time.Sleep(wait)
 		}
 		err = getJSON(o.Client, u, opt, out)
+		if errors.As(err, &se) && budgetExhausted(se) {
+			return &budgetError{se}
+		}
 	}
 	if errors.As(err, &se) && (se.Code == http.StatusUnauthorized || se.Code == http.StatusTooManyRequests) {
 		hint := openAlexKeyHint

@@ -93,6 +93,10 @@ type httpOptions struct {
 	// returns. A client whose URLs carry a secret sets it to a copy of the
 	// URL with the secret removed.
 	ShownURL string
+
+	// OnResponse, if set, is called with the headers of every response,
+	// whatever its status.
+	OnResponse func(http.Header)
 }
 
 // UserAgent returns the User-Agent string to send with outgoing requests,
@@ -130,6 +134,9 @@ func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 		return showURLError(err, shown)
 	}
 	defer resp.Body.Close()
+	if opt.OnResponse != nil {
+		opt.OnResponse(resp.Header)
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {

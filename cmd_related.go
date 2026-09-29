@@ -31,7 +31,6 @@ import (
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/match"
 	"seehuhn.de/go/paper/internal/sources"
-	"seehuhn.de/go/paper/internal/store"
 	"seehuhn.de/go/paper/internal/tex"
 )
 
@@ -305,11 +304,12 @@ func runRelated(args []string) error {
 	}
 
 	start := time.Now()
+	oa := newOpenAlex(cfg)
+	defer warnLowBudget(os.Stderr, oa)
 	fail := func(err error) error {
-		logOpenAlexErr(s, "related", path, err, time.Since(start))
+		logOpenAlexErr(s, oa, "related", path, err, time.Since(start))
 		return fmt.Errorf("related: %w", err)
 	}
-	oa := newOpenAlex(cfg)
 
 	// Resolve the entries.
 	ident := &bibIdentity{dois: map[string]bool{}, arxivs: map[string]bool{}}
@@ -329,19 +329,12 @@ func runRelated(args []string) error {
 			nFailed++
 			lastErr = err
 			unresolved = append(unresolved, e.key)
-			s.LogEvent(store.Event{
-				Command:  "related",
-				Ref:      e.ref(),
-				Source:   "openalex",
-				Outcome:  "openalex-unresolved",
-				Detail:   eventDetail(err),
-				Duration: time.Since(start).Milliseconds(),
-			})
+			logOpenAlexErr(s, oa, "related", e.ref(), wrapOutcome("openalex-unresolved", err), time.Since(start))
 			continue
 		}
 		if w == nil {
 			unresolved = append(unresolved, e.key)
-			logOpenAlex(s, "related", e.ref(), "openalex-unresolved", 0, time.Since(start))
+			logOpenAlex(s, oa, "related", e.ref(), "openalex-unresolved", 0, time.Since(start))
 			continue
 		}
 		nResolved++
@@ -351,7 +344,7 @@ func runRelated(args []string) error {
 			bibKeyOf[w.ID] = e.key
 		}
 		if e.typ == "article" && len(w.References) == 0 {
-			logOpenAlex(s, "related", e.key+" "+w.ID, "openalex-no-refs", 0, time.Since(start))
+			logOpenAlex(s, oa, "related", e.key+" "+w.ID, "openalex-no-refs", 0, time.Since(start))
 		}
 	}
 
@@ -376,7 +369,7 @@ func runRelated(args []string) error {
 		citing, _, err := oa.Citing(id, relatedCitingLimit, *since)
 		if err != nil {
 			// This work contributes no cites-yours counts.
-			logOpenAlexErr(s, "related", bibKeyOf[id]+" "+id, err, time.Since(start))
+			logOpenAlexErr(s, oa, "related", bibKeyOf[id]+" "+id, err, time.Since(start))
 			continue
 		}
 		seen := map[string]bool{}
@@ -475,7 +468,7 @@ func runRelated(args []string) error {
 	if len(picked) == 0 {
 		outcome = "no-hits"
 	}
-	logOpenAlex(s, "related", path, outcome, len(picked), time.Since(start))
+	logOpenAlex(s, oa, "related", path, outcome, len(picked), time.Since(start))
 
 	if *asJSON {
 		out := struct {

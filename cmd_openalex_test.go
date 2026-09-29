@@ -21,6 +21,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"seehuhn.de/go/paper/internal/sources"
@@ -204,5 +205,132 @@ func TestPrintWorksJSON(t *testing.T) {
 	printWorks(&buf, 0, nil, false, true)
 	if !bytes.Contains(buf.Bytes(), []byte(`"works": []`)) {
 		t.Errorf("empty result should give an empty works array:\n%s", buf.String())
+	}
+}
+
+// openAlexCostServer serves refsWork and refsList with the three rate limit
+// headers set to credits, remaining and limit, and points openAlexBase at
+// itself.
+func openAlexCostServer(t *testing.T, credits, remaining, limit string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-RateLimit-Credits-Used", credits)
+		w.Header().Set("X-RateLimit-Remaining", remaining)
+		w.Header().Set("X-RateLimit-Limit", limit)
+		if r.URL.Path == "/works/W100" {
+			w.Write([]byte(refsWork))
+			return
+		}
+		w.Write([]byte(refsList))
+	}))
+	t.Cleanup(srv.Close)
+	overrideOpenAlex(t, srv.URL)
+}
+
+func TestLogOpenAlexCarriesCost(t *testing.T) {
+	_, dir := fixtureStore(t)
+	openAlexCostServer(t, "0.001", "0.42", "1")
+	var err error
+	captureStdout(t, func() { err = runRefs([]string{"W100"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev struct {
+		Credits   *float64 `json:"credits"`
+		Remaining *float64 `json:"remaining"`
+	}
+	log := strings.TrimSpace(readEventLog(t, dir))
+	if err := json.Unmarshal([]byte(log), &ev); err != nil {
+		t.Fatalf("event %q: %v", log, err)
+	}
+	if ev.Credits == nil || *ev.Credits != 0.002 || ev.Remaining == nil || *ev.Remaining != 0.42 {
+		t.Errorf("event lacks credits 0.002 (two requests of 0.001) and remaining 0.42: %s", log)
+	}
+}
+
+func TestLogOpenAlexOmitsUnknownCost(t *testing.T) {
+	_, dir := fixtureStore(t)
+	openAlexRoutes(t, map[string]string{"/works/W100": refsWork, "/works": refsList})
+	var err error
+	captureStdout(t, func() { err = runRefs([]string{"W100"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := readEventLog(t, dir)
+	if strings.Contains(log, `"credits"`) || strings.Contains(log, `"remaining"`) {
+		t.Errorf("event carries cost fields although no header was sent:\n%s", log)
+	}
+}
+
+func TestLowBudgetWarning(t *testing.T) {
+	for _, tc := range []struct {
+		remaining, limit string
+		want             bool
+	}{
+		{"0.05", "1", true},
+		{"0.5", "1", false},
+		{"0.05", "", true},   // no limit header: the limit is $1
+		{"0.20", "", false},  // no limit header
+		{"0.20", "10", true}, // a tenth of a $10 limit is $1
+	} {
+		t.Run(tc.remaining+"/"+tc.limit, func(t *testing.T) {
+			fixtureStore(t)
+			openAlexCostServer(t, "0.001", tc.remaining, tc.limit)
+			var err error
+			var stdout string
+			stderr := captureStderr(t, func() {
+				stdout = captureStdout(t, func() { err = runRefs([]string{"W100"}) })
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := "openalex: $" + tc.remaining + " of the day's budget left\n"
+			if got := strings.Contains(stderr, line); got != tc.want {
+				t.Errorf("stderr %q: has warning = %v, want %v", stderr, got, tc.want)
+			}
+			if strings.Count(stderr, "budget left") > 1 {
+				t.Errorf("warning repeated: %q", stderr)
+			}
+			if strings.Contains(stdout, "budget left") {
+				t.Errorf("warning on stdout: %q", stdout)
+			}
+		})
+	}
+}
+
+func TestWarnLowBudgetWithoutResponse(t *testing.T) {
+	var buf bytes.Buffer
+	oa := &sources.OpenAlex{}
+	warnLowBudget(&buf, oa)
+	if buf.Len() != 0 {
+		t.Errorf("warning without any response: %q", buf.String())
+	}
+}
+
+func TestBudget429EventAndWarning(t *testing.T) {
+	_, dir := fixtureStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Limit", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"message":"Insufficient budget"}`))
+	}))
+	t.Cleanup(srv.Close)
+	overrideOpenAlex(t, srv.URL)
+
+	var err error
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() { err = runRefs([]string{"W100"}) })
+	})
+	if err == nil || !strings.HasSuffix(err.Error(), "the budget resets at midnight UTC.") {
+		t.Fatalf("err = %v", err)
+	}
+	log := readEventLog(t, dir)
+	if !strings.Contains(log, `"remaining":0`) || strings.Contains(log, `"credits"`) {
+		t.Errorf("event should carry remaining 0 and no credits:\n%s", log)
+	}
+	if !strings.Contains(stderr, "openalex: $0.00 of the day's budget left\n") {
+		t.Errorf("stderr lacks the warning: %q", stderr)
 	}
 }

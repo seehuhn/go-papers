@@ -230,29 +230,71 @@ func workText(l workLine) string {
 	return strings.Join(fields, " | ")
 }
 
-// logOpenAlex records one OpenAlex command in the event log.
-func logOpenAlex(s *store.Store, cmd, ref, outcome string, hits int, d time.Duration) {
+// costFields returns the credits and remaining values of an event: the
+// credits oa's requests have cost so far, and the budget left as of the last
+// response that said. Each is nil if no response carried its header, and
+// both are nil if oa is nil.
+func costFields(oa *sources.OpenAlex) (credits, remaining *float64) {
+	if oa == nil {
+		return nil, nil
+	}
+	if c, ok := oa.Spent(); ok {
+		credits = &c
+	}
+	if r, ok := oa.Remaining(); ok {
+		remaining = &r
+	}
+	return credits, remaining
+}
+
+// logOpenAlex records one OpenAlex command in the event log, with the cost
+// of oa's requests so far. oa may be nil if no request was made.
+func logOpenAlex(s *store.Store, oa *sources.OpenAlex, cmd, ref, outcome string, hits int, d time.Duration) {
+	credits, remaining := costFields(oa)
 	s.LogEvent(store.Event{
-		Command:  cmd,
-		Ref:      ref,
-		Source:   "openalex",
-		Outcome:  outcome,
-		Hits:     hits,
-		Duration: d.Milliseconds(),
+		Command:   cmd,
+		Ref:       ref,
+		Source:    "openalex",
+		Outcome:   outcome,
+		Hits:      hits,
+		Duration:  d.Milliseconds(),
+		Credits:   credits,
+		Remaining: remaining,
 	})
 }
 
 // logOpenAlexErr records a failed OpenAlex command in the event log. The
 // outcome is that of err (see eventOutcome) and the detail its first line.
-func logOpenAlexErr(s *store.Store, cmd, ref string, err error, d time.Duration) {
+// oa is as for logOpenAlex.
+func logOpenAlexErr(s *store.Store, oa *sources.OpenAlex, cmd, ref string, err error, d time.Duration) {
+	credits, remaining := costFields(oa)
 	s.LogEvent(store.Event{
-		Command:  cmd,
-		Ref:      ref,
-		Source:   "openalex",
-		Outcome:  eventOutcome(err),
-		Detail:   eventDetail(err),
-		Duration: d.Milliseconds(),
+		Command:   cmd,
+		Ref:       ref,
+		Source:    "openalex",
+		Outcome:   eventOutcome(err),
+		Detail:    eventDetail(err),
+		Duration:  d.Milliseconds(),
+		Credits:   credits,
+		Remaining: remaining,
 	})
+}
+
+// warnLowBudget writes a line to w if oa's last remaining value is less than a
+// tenth of the day's budget left (of $1 if the response gave no limit).
+// Commands defer it, so that it comes once, after their output.
+func warnLowBudget(w io.Writer, oa *sources.OpenAlex) {
+	remaining, ok := oa.Remaining()
+	if !ok {
+		return
+	}
+	limit := oa.LastLimit()
+	if limit <= 0 {
+		limit = 1
+	}
+	if remaining < limit/10 {
+		fmt.Fprintf(w, "openalex: $%.2f of the day's budget left\n", remaining)
+	}
 }
 
 // checkNoTrailingFlags returns an error naming the first of args that looks
