@@ -86,6 +86,7 @@ var (
 	handleBase        = "https://doi.org"
 	openLibraryBase   = "https://openlibrary.org"
 	arxivDownloadBase = "https://arxiv.org"
+	openAlexBase      = "https://api.openalex.org"
 )
 
 // apiTimeout bounds a metadata request; downloadTimeout bounds a file
