@@ -64,6 +64,10 @@ type relatedServer struct {
 	byName map[string]string      // title.search value -> ID
 	citing map[string][]string    // work ID -> IDs of its citing works
 	rec    *openAlexRecorder
+
+	// failIf, if set, makes the server answer HTTP 400 to every request
+	// it reports true for.
+	failIf func(r *http.Request) bool
 }
 
 func (fx *relatedServer) start(t *testing.T) {
@@ -81,6 +85,10 @@ func (fx *relatedServer) start(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fx.rec.add(r.URL.Path + "?" + r.URL.RawQuery)
 		w.Header().Set("Content-Type", "application/json")
+		if fx.failIf != nil && fx.failIf(r) {
+			http.Error(w, `{"error": "bad request"}`, http.StatusBadRequest)
+			return
+		}
 		if id, ok := fx.byPath[r.URL.Path]; ok {
 			w.Write([]byte(fx.works[id].json()))
 			return
@@ -434,5 +442,85 @@ func TestRelatedDropsOtherVersionByLookupCase(t *testing.T) {
 	}
 	if _, ok := works["W62"]; !ok {
 		t.Errorf("W62 is not listed:\n%s", out)
+	}
+}
+
+func TestRelatedSurvivesFailedEntry(t *testing.T) {
+	_, dir := fixtureStore(t)
+	fx := newRelatedFixture(t)
+	fx.failIf = func(r *http.Request) bool {
+		return strings.Contains(r.URL.Query().Get("filter"), "title.search:Charlie")
+	}
+	var err error
+	out := captureStdout(t, func() { err = runRelated([]string{"-short", "testdata/related.bib"}) })
+	if err != nil {
+		t.Fatalf("one failed entry ended the run: %v", err)
+	}
+	lines := strings.Split(out, "\n")
+	if lines[0] != "resolved: 2 of 5 entries" || lines[1] != "unresolved: charlie2018, delta2019, echo2021" {
+		t.Errorf("first lines %q", lines[:2])
+	}
+	log := readEventLog(t, dir)
+	var found bool
+	for _, l := range strings.Split(log, "\n") {
+		if strings.Contains(l, `"ref":"charlie2018 Charlie estimators for sparse models"`) {
+			found = true
+			for _, want := range []string{`"outcome":"openalex-unresolved"`, `"detail":"openalex:`, "400"} {
+				if !strings.Contains(l, want) {
+					t.Errorf("event lacks %s: %s", want, l)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no event for charlie2018:\n%s", log)
+	}
+}
+
+func TestRelatedSurvivesFailedCiting(t *testing.T) {
+	_, dir := fixtureStore(t)
+	fx := newRelatedFixture(t)
+	fx.failIf = func(r *http.Request) bool {
+		f, _, _ := strings.Cut(r.URL.Query().Get("filter"), ",")
+		return f == "cites:W1"
+	}
+	var err error
+	out := captureStdout(t, func() { err = runRelated([]string{"-short", "testdata/related.bib"}) })
+	if err != nil {
+		t.Fatalf("a failed Citing call ended the run: %v", err)
+	}
+	works := worksIn(out)
+	if l, ok := works["W31"]; ok {
+		t.Errorf("W31 is only a citer of the failed W1, but is listed: %s", l)
+	}
+	if l := works["W30"]; !strings.Contains(l, "cites-yours 2") {
+		t.Errorf("W30 = %q, want cites-yours 2 (W2 and W3 only)", l)
+	}
+	log := readEventLog(t, dir)
+	var found bool
+	for _, l := range strings.Split(log, "\n") {
+		if strings.Contains(l, `"ref":"alpha2020 W1"`) {
+			found = true
+			if !strings.Contains(l, `"outcome":"error"`) || !strings.Contains(l, `"detail":"openalex:`) {
+				t.Errorf("event = %s", l)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no citing-error event for alpha2020 W1:\n%s", log)
+	}
+}
+
+func TestRelatedFailsWhenEveryEntryFails(t *testing.T) {
+	_, dir := fixtureStore(t)
+	fx := newRelatedFixture(t)
+	fx.failIf = func(r *http.Request) bool { return true }
+	var err error
+	captureStdout(t, func() { err = runRelated([]string{"-short", "testdata/related.bib"}) })
+	if err == nil {
+		t.Fatal("expected an error when every entry fails")
+	}
+	if log := readEventLog(t, dir); !strings.Contains(log, `"outcome":"error"`) {
+		t.Errorf("no error event:\n%s", log)
 	}
 }

@@ -327,6 +327,21 @@ func TestOpenAlexByTitle(t *testing.T) {
 	}
 }
 
+// TestOpenAlexByTitleDropsWildcards: OpenAlex reads ? and * in title.search
+// as wildcards and answers HTTP 400 for them.
+func TestOpenAlexByTitleDropsWildcards(t *testing.T) {
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got := strings.TrimPrefix(r.URL.Query().Get("filter"), "title.search:")
+		if want := "quel bilan un quart de si\u00e8cle apr\u00e8s Bordes and more"; got != want {
+			t.Errorf("title.search = %q, want %q", got, want)
+		}
+		io.WriteString(w, oaListJSON(0))
+	})
+	if _, err := o.ByTitle("quel bilan un quart de si\u00e8cle apr\u00e8s Bordes? and *more*,"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenAlexNoAbstract(t *testing.T) {
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, strings.Replace(openAlexHoeffding,

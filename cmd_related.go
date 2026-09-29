@@ -31,6 +31,7 @@ import (
 	"seehuhn.de/go/paper/internal/bibtex"
 	"seehuhn.de/go/paper/internal/match"
 	"seehuhn.de/go/paper/internal/sources"
+	"seehuhn.de/go/paper/internal/store"
 	"seehuhn.de/go/paper/internal/tex"
 )
 
@@ -81,7 +82,11 @@ held, cited_by_yours and cites_yours are left out when empty or zero;
 -short also drops abstract.
 
 Entries that are not found are recorded in the event log, as are found
-articles for which OpenAlex lists no references.
+articles for which OpenAlex lists no references. An entry whose lookup
+fails (say, OpenAlex answers with an error) counts as not found, and
+the failure is recorded in the event log; so is a failed citation query
+for a found entry, whose works then add no cites-yours counts. Only if
+the lookup fails for every entry does the command stop with an error.
 
 options:
     -n <count>    list at most <count> works (default 40)
@@ -282,8 +287,11 @@ func runRelated(args []string) error {
 	ident := &bibIdentity{dois: map[string]bool{}, arxivs: map[string]bool{}}
 	resolved := map[string]*sources.OpenAlexWork{} // by ID
 	var resolvedIDs []string
+	bibKeyOf := map[string]string{} // work ID -> key of the first entry resolving to it
 	var unresolved []string
 	nResolved := 0
+	nFailed := 0
+	var lastErr error
 	for _, ke := range keyed {
 		e := newRelatedEntry(ke)
 		if e.doi != "" {
@@ -298,7 +306,19 @@ func runRelated(args []string) error {
 
 		w, err := resolveEntry(oa, e)
 		if err != nil {
-			return fail(err)
+			// One bad entry does not end the run; it counts as unresolved.
+			nFailed++
+			lastErr = err
+			unresolved = append(unresolved, e.key)
+			s.LogEvent(store.Event{
+				Command:  "related",
+				Ref:      e.ref(),
+				Source:   "openalex",
+				Outcome:  "openalex-unresolved",
+				Detail:   eventDetail(err),
+				Duration: time.Since(start).Milliseconds(),
+			})
+			continue
 		}
 		if w == nil {
 			unresolved = append(unresolved, e.key)
@@ -309,10 +329,15 @@ func runRelated(args []string) error {
 		if resolved[w.ID] == nil {
 			resolved[w.ID] = w
 			resolvedIDs = append(resolvedIDs, w.ID)
+			bibKeyOf[w.ID] = e.key
 		}
 		if ke.Entry.Type == "article" && len(w.References) == 0 {
 			logOpenAlex(s, "related", e.key+" "+w.ID, "openalex-no-refs", 0, time.Since(start))
 		}
+	}
+
+	if nFailed == len(keyed) && nFailed > 0 {
+		return fail(lastErr)
 	}
 
 	// Count the links to and from the resolved works.
@@ -331,7 +356,9 @@ func runRelated(args []string) error {
 		}
 		citing, _, err := oa.Citing(id, relatedCitingLimit, *since)
 		if err != nil {
-			return fail(err)
+			// This work contributes no cites-yours counts.
+			logOpenAlexErr(s, "related", bibKeyOf[id]+" "+id, err, time.Since(start))
+			continue
 		}
 		seen := map[string]bool{}
 		for i := range citing {

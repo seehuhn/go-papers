@@ -365,8 +365,10 @@ func (o *OpenAlex) list(q url.Values, n int) ([]OpenAlexWork, int, error) {
 
 // ByTitle returns the best three works whose title matches title.
 func (o *OpenAlex) ByTitle(title string) ([]OpenAlexWork, error) {
-	// Commas and pipes separate filters and values in the filter syntax.
-	title = strings.NewReplacer(",", " ", "|", " ").Replace(title)
+	// Commas and pipes separate filters and values in the filter syntax;
+	// ? and * are wildcards, which title.search rejects with HTTP 400.
+	title = strings.NewReplacer(",", " ", "|", " ", "?", " ", "*", " ").Replace(title)
+	title = strings.Join(strings.Fields(title), " ")
 	q := url.Values{}
 	q.Set("filter", "title.search:"+title)
 	q.Set("per_page", "3")
