@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,6 +43,47 @@ const maxBodySize = 10 << 20 // 10 MB
 // string-matching on that text is not safe.
 var ErrNotFound = errors.New("not found")
 
+// StatusError is the error getJSON returns for an HTTP status other than 200
+// and 404. Callers that need the code (a rate limit, a rejected key) find it
+// with errors.As.
+type StatusError struct {
+	Code       int
+	RetryAfter time.Duration // from the Retry-After header, 0 if absent
+	URL        string
+	Snippet    string // first 200 bytes of the body
+
+	status string // the full status line, e.g. "429 Too Many Requests"
+}
+
+func (e *StatusError) Error() string {
+	status := e.status
+	if status == "" {
+		status = fmt.Sprintf("%d %s", e.Code, http.StatusText(e.Code))
+	}
+	return fmt.Sprintf("unexpected status %s for %s: %s", status, e.URL, e.Snippet)
+}
+
+// parseRetryAfter reads a Retry-After header, either a number of seconds or
+// an HTTP date. It returns 0 if the header is absent or unreadable.
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
 // httpOptions carries per-request settings for getJSON.
 type httpOptions struct {
 	Email string // for the polite pool; may be empty
@@ -58,7 +101,7 @@ func UserAgent(email string) string {
 
 // getJSON fetches url and decodes the JSON response body into out. Unknown
 // JSON members are tolerated. Non-200 statuses become errors: a 404
-// produces an error wrapping ErrNotFound, other statuses produce an error
+// produces an error wrapping ErrNotFound, other statuses produce a *StatusError
 // naming the status code and up to 200 bytes of the response body.
 func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 	if client == nil {
@@ -91,7 +134,13 @@ func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 		if len(snippet) > 200 {
 			snippet = snippet[:200]
 		}
-		return fmt.Errorf("unexpected status %s for %s: %s", resp.Status, url, snippet)
+		return &StatusError{
+			Code:       resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+			URL:        url,
+			Snippet:    string(snippet),
+			status:     resp.Status,
+		}
 	}
 
 	if err := json.Unmarshal(body, out); err != nil {
