@@ -394,3 +394,45 @@ func TestRelatedNeedsOneFile(t *testing.T) {
 		}
 	}
 }
+
+// TestRelatedDropsOtherVersionByLookupCase covers the other side of the
+// DOI case folding: the bibliography spells its DOI in lower case and
+// OpenAlex spells the DOI of another version in upper case.
+func TestRelatedDropsOtherVersionByLookupCase(t *testing.T) {
+	fixtureStore(t)
+	ws := []relatedWork{
+		{id: "W60", doi: "10.1000/f", title: "Foxtrot methods", year: 2015, cited: 20,
+			refs: []string{"W61", "W62"}},
+		{id: "W61", doi: "10.1000/F", title: "A retitled Foxtrot", year: 2015, cited: 4},
+		{id: "W62", doi: "10.1000/x62", title: "Sixty-two", year: 2010, cited: 9},
+	}
+	fx := &relatedServer{
+		works:  map[string]relatedWork{},
+		byPath: map[string]string{"/works/doi:10.1000/f": "W60"},
+		byName: map[string]string{},
+		citing: map[string][]string{},
+	}
+	for _, w := range ws {
+		fx.works[w.id] = w
+	}
+	fx.start(t)
+
+	bib := filepath.Join(t.TempDir(), "refs.bib")
+	entry := "@article{foxtrot2015,\n  author = {Fay Foxtrot},\n  title = {Foxtrot methods},\n  year = {2015},\n  doi = {10.1000/f},\n}\n"
+	if err := os.WriteFile(bib, []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = runRelated([]string{"-short", bib}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	works := worksIn(out)
+	if _, ok := works["W61"]; ok {
+		t.Errorf("W61 is listed, but has the same DOI as a bibliography entry, in other case:\n%s", out)
+	}
+	if _, ok := works["W62"]; !ok {
+		t.Errorf("W62 is not listed:\n%s", out)
+	}
+}
