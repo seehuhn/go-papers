@@ -61,7 +61,8 @@ Settings live in one file per user, outside the store:
 ```json
 {
   "store": "/home/you/Papers",
-  "email": "you@example.com"
+  "email": "you@example.com",
+  "openalex_key": "your-openalex-key"
 }
 ```
 
@@ -69,7 +70,11 @@ Settings live in one file per user, outside the store:
 environment set up at all. `email` is the contact address the online
 metadata services are given: Unpaywall requires one and refuses to answer
 without it, and Crossref uses it to put requests in its faster,
-better-behaved "polite pool".
+better-behaved "polite pool". `openalex_key` is optional: a free OpenAlex
+API key (make an account at openalex.org), used by `discover`, `refs`,
+`citing` and `related`. Without one these commands use OpenAlex's small
+anonymous budget and fail with a message naming `paper init -openalex-key`
+once it is spent.
 
 Write the file with `paper init` rather than by hand.
 
@@ -88,7 +93,7 @@ synced between your machines (e.g. via syncthing).
 
 ## Commands
 
-Nine commands are implemented so far.
+Thirteen commands are implemented so far.
 
 ### `paper help`
 
@@ -99,7 +104,7 @@ arguments.
 $ paper help
 ```
 
-### `paper init [-email <address>] [-force] <dir>`
+### `paper init [-email <address>] [-openalex-key <key>] [-force] <dir>`
 
 Prepares `<dir>` as a paper store and records it in the config file, so
 that every later command finds it without a flag. The directory is
@@ -115,8 +120,11 @@ Running it again on the same store is how a second machine adopts an
 already-synced store: the marker is left alone and only the config is
 written. Pointing the config at a *different* store is refused unless
 `-force` is given, so that a mistyped path cannot silently strand the
-store you already have. `-email` is optional and, when omitted, leaves
-any address already configured in place.
+store you already have. `-email` and `-openalex-key` are optional and,
+when omitted, leave any value already configured in place. The OpenAlex
+key is a free API key from an account at openalex.org; `discover`, `refs`,
+`citing` and `related` use it, and without one they fall back to OpenAlex's
+small anonymous budget.
 
 ### `paper fetch [-dry-run] [-doi <doi>] [-into <key>] <ref>`
 
@@ -181,6 +189,73 @@ and resolve exits nonzero without writing.
 ```bash
 $ paper resolve 10.1017/CBO9781139344203
 $ paper resolve Applied Cryptography, Schneier, 1996
+```
+
+### `paper discover [-n <count>] [-since <year>] [-short] [-json] <query>...`
+
+Searches OpenAlex for works on a topic, to find literature the store does
+not hold yet. The words of the query are joined and matched against titles,
+abstracts and other text. The output starts with `total: <matches>, shown:
+<listed>` and continues with one line per work, most relevant first:
+OpenAlex ID, year, first author's surname, title, venue, citation count,
+and the DOI and arXiv ID where there are any. A work the store already
+holds is marked `held:<key>`. Abstracts follow each line unless `-short` is
+given; `-json` prints the result as JSON instead. `-n` limits the number of
+works (default 25, at most 200) and `-since` drops works published before
+the given year. The store is only read, never changed.
+
+```bash
+$ paper discover -n 3 -short "water isotopes HadCM3"
+```
+
+### `paper refs [-short] [-json] <id>`
+
+Lists the works a paper cites, as OpenAlex records them, to find the
+literature behind a result. `<id>` is an OpenAlex ID, a DOI or an arXiv ID.
+The output begins with a `work:` line describing the paper itself, then
+`total: <references>, shown: <listed>`, then one line per reference in the
+same format as `discover`, marking works the store already holds. When
+OpenAlex lists no references for a journal article, the command says so:
+that is a gap in OpenAlex, not proof that the article cites nothing.
+
+```bash
+$ paper refs 10.1080/01621459.1963.10500830
+```
+
+### `paper citing [-n <count>] [-since <year>] [-short] [-json] <id>`
+
+Lists the works that cite a paper, newest first, to see what has been
+built on a result. `<id>` is an OpenAlex ID, a DOI or an arXiv ID. The
+output starts with the total number of citing works, followed by one line
+per work in the format of `discover`. `-n` limits the number of works
+(default 50, at most 200) and `-since` drops works published before the
+given year.
+
+```bash
+$ paper citing -n 5 10.1080/01621459.1963.10500830
+```
+
+### `paper related [-n <count>] [-since <year>] [-short] [-json] <refs.bib>`
+
+Finds works that a bibliography does not yet cite but that sit close to it
+in the citation graph. Each entry of the `.bib` file is looked up in
+OpenAlex by DOI (from the `doi` field or a doi.org URL), else by arXiv ID,
+else by title, and a title counts only when the best hit matches it
+closely. Over the entries found, every other work gets two counts: how
+many of your works list it as a reference (`cited-by-yours`) and how many
+of your works it cites (`cites-yours`). The second count looks only at the
+200 newest citations of each of your works. Works are ranked by the larger
+count, then by the sum, then by citation count. Your own works and other
+versions of them are left out.
+
+The output begins with `resolved: <found> of <entries> entries` and, if
+some entries were not found, an `unresolved:` line naming their keys.
+Entries not found, and found articles for which OpenAlex lists no
+references, are recorded in the event log. `-n` limits the number of works
+(default 40).
+
+```bash
+$ paper related -n 10 refs.bib
 ```
 
 ### `paper ingest [-since <ts>] [-into <key>] [-doi <doi>] [-arxiv <id>] <file.pdf>...`

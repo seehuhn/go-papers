@@ -105,7 +105,11 @@ date. "paper check" validates all of this.
 The event log events/<hostname>.jsonl holds one JSON line per command
 outcome: what ran, how it ended, which source resolved it. It is
 append-only, per-machine, jq-able, and read by no command; nothing in
-it ever leaves the machine.
+it ever leaves the machine. The OpenAlex commands discover, refs, citing
+and related log with source "openalex"; besides ordinary failures their
+outcomes are openalex-unknown (OpenAlex does not know the work asked
+for), openalex-no-refs (a found article with no references listed) and
+openalex-unresolved (a bibliography entry related could not find).
 
 The store location comes from the -store flag when given, and from the
 config file otherwise (~/.paper.json, or the file named by

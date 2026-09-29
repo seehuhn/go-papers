@@ -130,7 +130,7 @@ func newRelatedFixture(t *testing.T) *relatedServer {
 		{id: "W13", doi: "10.1000/x13", title: "Thirteen", year: 1993, cited: 100},
 		// Other versions of bibliography entries, under other IDs:
 		{id: "W40", title: "Alpha theory of estimation", year: 2019, cited: 5},
-		{id: "W50", doi: "10.1000/A", title: "Some retitled version", year: 2020, cited: 6},
+		{id: "W50", doi: "10.1000/a", title: "Some retitled version", year: 2020, cited: 6},
 		{id: "W51", title: "Another title entirely", year: 2007, cited: 7,
 			arxivPage: "https://arxiv.org/abs/math/0611001v1"},
 		{id: "W30", doi: "10.1000/x30", title: "Cites everything", year: 2023, cited: 3},
