@@ -73,8 +73,8 @@ without it, and Crossref uses it to put requests in its faster,
 better-behaved "polite pool". `openalex_key` is optional: a free OpenAlex
 API key (make an account at openalex.org), used by `discover`, `refs`,
 `citing` and `related`. Without one these commands use OpenAlex's small
-anonymous budget and fail with a message naming `paper init -openalex-key`
-once it is spent.
+anonymous budget and, once it is spent, fail with a message naming
+`paper init -openalex-key KEY <store dir>`.
 
 Write the file with `paper init` rather than by hand.
 

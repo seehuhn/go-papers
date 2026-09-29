@@ -35,7 +35,11 @@ const openAlexSelect = "id,doi,display_name,publication_year,type,cited_by_count
 
 // openAlexKeyHint is appended to errors that a key can cure.
 const openAlexKeyHint = "; get a free key at https://openalex.org/rest-api " +
-	"and store it with `paper init -openalex-key KEY`"
+	"and store it with `paper init -openalex-key KEY <store dir>`"
+
+// openAlexBadKeyHint replaces openAlexKeyHint when the request carried a key.
+const openAlexBadKeyHint = "; the API key was rejected, replace it with " +
+	"`paper init -openalex-key KEY <store dir>`"
 
 // openAlexBatch is the most IDs one Works request carries.
 const openAlexBatch = 50
@@ -193,15 +197,21 @@ func (o *OpenAlex) baseURL() string {
 
 // get fetches path?q and decodes the JSON reply into out. It adds select and
 // api_key, waits and retries once on HTTP 429, and turns a second 429 or a
-// 401 into an error that names the key setting.
+// 401 into an error that names the key setting.  The URLs in errors show
+// api_key=REDACTED, so that the key does not reach logs.
 func (o *OpenAlex) get(path string, q url.Values, out any) error {
 	q.Set("select", openAlexSelect)
+	base := o.baseURL() + path + "?"
+	u, shown := base+q.Encode(), base+q.Encode()
 	if o.Key != "" {
 		q.Set("api_key", o.Key)
+		u = base + q.Encode()
+		q.Set("api_key", "REDACTED")
+		shown = base + q.Encode()
 	}
-	u := o.baseURL() + path + "?" + q.Encode()
+	opt := httpOptions{Email: o.Email, ShownURL: shown}
 
-	err := getJSON(o.Client, u, httpOptions{Email: o.Email}, out)
+	err := getJSON(o.Client, u, opt, out)
 	var se *StatusError
 	if errors.As(err, &se) && se.Code == http.StatusTooManyRequests {
 		wait := se.RetryAfter
@@ -214,10 +224,14 @@ func (o *OpenAlex) get(path string, q url.Values, out any) error {
 		} else {
 			time.Sleep(wait)
 		}
-		err = getJSON(o.Client, u, httpOptions{Email: o.Email}, out)
+		err = getJSON(o.Client, u, opt, out)
 	}
 	if errors.As(err, &se) && (se.Code == http.StatusUnauthorized || se.Code == http.StatusTooManyRequests) {
-		return fmt.Errorf("openalex: HTTP %d%s: %w", se.Code, openAlexKeyHint, err)
+		hint := openAlexKeyHint
+		if se.Code == http.StatusUnauthorized && o.Key != "" {
+			hint = openAlexBadKeyHint
+		}
+		return fmt.Errorf("openalex: HTTP %d%s: %w", se.Code, hint, err)
 	}
 	if err != nil {
 		return fmt.Errorf("openalex: %w", err)

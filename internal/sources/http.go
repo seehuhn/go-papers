@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -87,6 +88,11 @@ func parseRetryAfter(v string) time.Duration {
 // httpOptions carries per-request settings for getJSON.
 type httpOptions struct {
 	Email string // for the polite pool; may be empty
+
+	// ShownURL, if set, replaces the request URL in every error getJSON
+	// returns. A client whose URLs carry a secret sets it to a copy of the
+	// URL with the secret removed.
+	ShownURL string
 }
 
 // UserAgent returns the User-Agent string to send with outgoing requests,
@@ -107,17 +113,21 @@ func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	shown := url
+	if opt.ShownURL != "" {
+		shown = opt.ShownURL
+	}
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return showURLError(err, shown)
 	}
 	req.Header.Set("User-Agent", UserAgent(opt.Email))
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return showURLError(err, shown)
 	}
 	defer resp.Body.Close()
 
@@ -128,7 +138,7 @@ func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("%w: %s", ErrNotFound, url)
+			return fmt.Errorf("%w: %s", ErrNotFound, shown)
 		}
 		snippet := body
 		if len(snippet) > 200 {
@@ -137,14 +147,26 @@ func getJSON(client *http.Client, url string, opt httpOptions, out any) error {
 		return &StatusError{
 			Code:       resp.StatusCode,
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
-			URL:        url,
+			URL:        shown,
 			Snippet:    string(snippet),
 			status:     resp.Status,
 		}
 	}
 
 	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("decoding response from %s: %w", url, err)
+		return fmt.Errorf("decoding response from %s: %w", shown, err)
 	}
 	return nil
+}
+
+// showURLError replaces the URL in a *url.Error by shown, so that a
+// transport error does not reveal secrets in the request URL.
+func showURLError(err error, shown string) error {
+	var ue *neturl.Error
+	if errors.As(err, &ue) {
+		cp := *ue
+		cp.URL = shown
+		return &cp
+	}
+	return err
 }

@@ -59,7 +59,7 @@ options:
     -store <dir>  path to the paper store (overrides the configured store)
 
 Anonymous OpenAlex requests are rate limited; a free key stored with
-"paper init -openalex-key KEY" removes the limit in practice.
+"paper init -openalex-key KEY <store dir>" removes the limit in practice.
 `
 
 func init() {

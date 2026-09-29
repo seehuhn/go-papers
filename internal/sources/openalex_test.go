@@ -420,3 +420,69 @@ func TestStatusErrorText(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", err.Error(), want)
 	}
 }
+
+const openAlexSecret = "SECRETKEY123"
+
+func TestOpenAlexErrorsHideKey(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		notHint bool
+	}{
+		{"500", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}, true},
+		{"404", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, false},
+		{"decode", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "not json") }, false},
+		{"401", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			o := openAlexServer(t, c.handler)
+			o.Key = openAlexSecret
+			_, err := o.Work("W1")
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if strings.Contains(err.Error(), openAlexSecret) {
+				t.Errorf("error text contains the key: %v", err)
+			}
+			if c.notHint && strings.Contains(err.Error(), "paper init") {
+				t.Errorf("error carries the key hint: %v", err)
+			}
+		})
+	}
+}
+
+func TestOpenAlexTransportErrorHidesKey(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	o := &OpenAlex{BaseURL: srv.URL, Client: srv.Client(), Key: openAlexSecret}
+	srv.Close()
+	_, err := o.Work("W1")
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if strings.Contains(err.Error(), openAlexSecret) {
+		t.Errorf("error text contains the key: %v", err)
+	}
+	if !strings.Contains(err.Error(), "api_key=REDACTED") {
+		t.Errorf("error text does not show the redacted URL: %v", err)
+	}
+}
+
+func TestOpenAlex401KeyRejected(t *testing.T) {
+	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	_, err := o.Work("W1")
+	if err == nil || !strings.Contains(err.Error(), "rejected") ||
+		strings.Contains(err.Error(), "get a free key") {
+		t.Errorf("key set: err = %v", err)
+	}
+	o.Key = ""
+	_, err = o.Work("W1")
+	if err == nil || !strings.Contains(err.Error(), "get a free key") ||
+		!strings.Contains(err.Error(), "paper init -openalex-key KEY <store dir>") {
+		t.Errorf("no key: err = %v", err)
+	}
+}
