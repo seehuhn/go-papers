@@ -132,8 +132,9 @@ func printWorks(w io.Writer, total int, lines []workLine, short, asJSON bool) er
 
 // printWorksOf is printWorks for a list that belongs to one work, head.
 // A non-nil head is written first: as a line "work: <work line>" before
-// the header line, or as the "work" member of the JSON object. It has no
-// abstract line.
+// the header line, or as the "work" member of the JSON object. Unless short
+// is set, the work line is followed by an indented abstract line, as every
+// work line is.
 func printWorksOf(w io.Writer, head *workLine, total int, lines []workLine, short, asJSON bool) error {
 	if asJSON {
 		out := struct {
@@ -164,6 +165,9 @@ func printWorksOf(w io.Writer, head *workLine, total int, lines []workLine, shor
 
 	if head != nil {
 		fmt.Fprintf(w, "work: %s\n", workText(*head))
+		if !short {
+			fmt.Fprintf(w, "    abstract: %s\n", abstractOrNone(head.Work.Abstract))
+		}
 	}
 	fmt.Fprintf(w, "total: %d, shown: %d\n", total, len(lines))
 	for _, l := range lines {
@@ -171,13 +175,16 @@ func printWorksOf(w io.Writer, head *workLine, total int, lines []workLine, shor
 		if short {
 			continue
 		}
-		abstract := l.Work.Abstract
-		if abstract == "" {
-			abstract = "none"
-		}
-		fmt.Fprintf(w, "    abstract: %s\n", abstract)
+		fmt.Fprintf(w, "    abstract: %s\n", abstractOrNone(l.Work.Abstract))
 	}
 	return nil
+}
+
+func abstractOrNone(abstract string) string {
+	if abstract == "" {
+		return "none"
+	}
+	return abstract
 }
 
 // workText formats the one-line text form of l.

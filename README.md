@@ -212,7 +212,8 @@ $ paper discover -n 3 -short "water isotopes HadCM3"
 
 Lists the works a paper cites, as OpenAlex records them, to find the
 literature behind a result. `<id>` is an OpenAlex ID, a DOI or an arXiv ID.
-The output begins with a `work:` line describing the paper itself, then
+The output begins with a `work:` line describing the paper itself (followed
+by its abstract unless `-short` is given), then
 `total: <references>, shown: <listed>`, then one line per reference in the
 same format as `discover`, marking works the store already holds. When
 OpenAlex lists no references for a journal article, the command says so:

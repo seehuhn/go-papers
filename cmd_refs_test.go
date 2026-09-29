@@ -146,11 +146,11 @@ func TestRefsPrintsResolvedWorkFirst(t *testing.T) {
 	if lines[0] != want {
 		t.Errorf("first line %q, want %q", lines[0], want)
 	}
-	if lines[1] != "total: 3, shown: 3" {
-		t.Errorf("second line %q", lines[1])
+	if lines[1] != "    abstract: Short abstract" {
+		t.Errorf("second line %q, want the work's abstract", lines[1])
 	}
-	if strings.Contains(lines[1], "abstract") || strings.HasPrefix(lines[2], "    abstract") {
-		t.Errorf("work line is followed by an abstract line:\n%s", out)
+	if lines[2] != "total: 3, shown: 3" {
+		t.Errorf("third line %q", lines[2])
 	}
 
 	out = captureStdout(t, func() { err = runRefs([]string{"-json", "W100"}) })

@@ -49,8 +49,8 @@ and one line per reference, in the order OpenAlex lists them:
 and cited <n> is the citation count. The doi, arxiv and held fields
 appear only when they apply; held:<key> names the store paper that
 already holds the work. The work line has the same fields. Unless -short
-is given, each reference line is followed by an indented "abstract: ..."
-line ("abstract: none" if OpenAlex has none).
+is given, the work line and each reference line are followed by an
+indented "abstract: ..." line ("abstract: none" if OpenAlex has none).
 
 If OpenAlex lists no references for a journal article, the output is
 "total: 0, shown: 0" and the line
