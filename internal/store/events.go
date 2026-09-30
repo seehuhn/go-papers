@@ -47,8 +47,8 @@ type Event struct {
 
 	// OpenAlex commands only, from the rate limit headers; nil when the
 	// headers were absent.
-	Credits   *float64 `json:"credits,omitzero"`   // dollars the command's requests cost
-	Remaining *float64 `json:"remaining,omitzero"` // dollars left of the day's budget
+	Credits   *float64 `json:"credits,omitzero"`   // OpenAlex credits the command's requests cost
+	Remaining *float64 `json:"remaining,omitzero"` // credits left today
 }
 
 // LogEvent appends e as one JSON line to events/<hostname>.jsonl under the

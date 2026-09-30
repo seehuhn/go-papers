@@ -126,6 +126,14 @@ key is a free API key from an account at openalex.org; `discover`, `refs`,
 `citing`, `related` and `chain` use it, and without one they fall back to
 OpenAlex's small anonymous budget.
 
+OpenAlex counts its budget in credits: a free key gets 10000 a day, a
+search such as `discover` costs 10 and a filter or title lookup 1. A
+`chain -bib` or `related` on a 30-entry bibliography costs about 300
+credits, mostly title lookups, and a whole coverage check 1100 to 2000.
+The event log records each command's `credits` and the `remaining` credits
+for the day, and a command that leaves under a tenth of them says so on
+stderr.
+
 ### `paper fetch [-dry-run] [-doi <doi>] [-into <key>] <ref>`
 
 Resolves a reference online and downloads what can be fetched reliably by

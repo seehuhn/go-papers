@@ -231,9 +231,9 @@ func workText(l workLine) string {
 }
 
 // costFields returns the credits and remaining values of an event: the
-// credits oa's requests have cost so far, and the budget left as of the last
-// response that said. Each is nil if no response carried its header, and
-// both are nil if oa is nil.
+// OpenAlex credits oa's requests have cost so far, and the credits left
+// today as of the last response that said. Each is nil if no response
+// carried its header, and both are nil if oa is nil.
 func costFields(oa *sources.OpenAlex) (credits, remaining *float64) {
 	if oa == nil {
 		return nil, nil
@@ -281,7 +281,7 @@ func logOpenAlexErr(s *store.Store, oa *sources.OpenAlex, cmd, ref string, err e
 }
 
 // warnLowBudget writes a line to w if oa's last remaining value is less than a
-// tenth of the day's budget left (of $1 if the response gave no limit).
+// tenth of the day's credits left (of 10000 if the response gave no limit).
 // Commands defer it, so that it comes once, after their output.
 func warnLowBudget(w io.Writer, oa *sources.OpenAlex) {
 	remaining, ok := oa.Remaining()
@@ -290,10 +290,10 @@ func warnLowBudget(w io.Writer, oa *sources.OpenAlex) {
 	}
 	limit := oa.LastLimit()
 	if limit <= 0 {
-		limit = 1
+		limit = 10000
 	}
 	if remaining < limit/10 {
-		fmt.Fprintf(w, "openalex: $%.2f of the day's budget left\n", remaining)
+		fmt.Fprintf(w, "openalex: %.0f of %.0f credits left today\n", remaining, limit)
 	}
 }
 

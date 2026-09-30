@@ -213,8 +213,8 @@ type OpenAlex struct {
 }
 
 // openAlexCost holds what the rate limit headers of the responses so far
-// said: the credits summed over all of them, and the latest remaining and
-// limit values.
+// said, all in OpenAlex credits: the credits summed over all of them, and
+// the latest remaining and limit values.
 type openAlexCost struct {
 	credits, remaining, limit float64
 	hasCredits, hasRemaining  bool
@@ -247,9 +247,10 @@ func (o *OpenAlex) record(h http.Header) {
 	}
 }
 
-// Spent returns the credits (dollars) the requests of this client have used
-// so far, summed from X-RateLimit-Credits-Used over every response. ok is
-// false until a response has carried the header; a malformed header counts
+// Spent returns the OpenAlex credits (10 for a search, 1 for a filter or
+// title lookup) the requests of this client have used so far, summed from
+// X-RateLimit-Credits-Used over every response. ok is false until a
+// response has carried the header; a malformed header counts
 // as absent.
 func (o *OpenAlex) Spent() (credits float64, ok bool) {
 	o.mu.Lock()
@@ -258,7 +259,7 @@ func (o *OpenAlex) Spent() (credits float64, ok bool) {
 	return math.Round(o.cost.credits*1e12) / 1e12, o.cost.hasCredits
 }
 
-// Remaining returns the budget left for the day as of the latest response
+// Remaining returns the credits left today as of the latest response
 // that carried X-RateLimit-Remaining. ok is false if none did.
 func (o *OpenAlex) Remaining() (remaining float64, ok bool) {
 	o.mu.Lock()
@@ -274,8 +275,8 @@ func (o *OpenAlex) LastCost() (credits, remaining float64, ok bool) {
 	return credits, remaining, ok1 && ok2
 }
 
-// LastLimit returns the day's budget from the latest response that gave
-// X-RateLimit-Limit, or 0 if none did.
+// LastLimit returns the day's budget in credits (10000 with a free key) from
+// the latest response that gave X-RateLimit-Limit, or 0 if none did.
 func (o *OpenAlex) LastLimit() float64 {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -297,7 +298,7 @@ func budgetExhausted(se *StatusError) bool {
 type budgetError struct{ se *StatusError }
 
 func (e *budgetError) Error() string {
-	return "openalex: HTTP 429: the day's budget is used up and further requests fail until " +
+	return "openalex: HTTP 429: the day's credits are used up and further requests fail until " +
 		"the budget resets at midnight UTC."
 }
 

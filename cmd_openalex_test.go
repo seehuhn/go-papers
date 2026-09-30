@@ -230,7 +230,7 @@ func openAlexCostServer(t *testing.T, credits, remaining, limit string) {
 
 func TestLogOpenAlexCarriesCost(t *testing.T) {
 	_, dir := fixtureStore(t)
-	openAlexCostServer(t, "0.001", "0.42", "1")
+	openAlexCostServer(t, "10", "4200", "10000")
 	var err error
 	captureStdout(t, func() { err = runRefs([]string{"W100"}) })
 	if err != nil {
@@ -244,8 +244,8 @@ func TestLogOpenAlexCarriesCost(t *testing.T) {
 	if err := json.Unmarshal([]byte(log), &ev); err != nil {
 		t.Fatalf("event %q: %v", log, err)
 	}
-	if ev.Credits == nil || *ev.Credits != 0.002 || ev.Remaining == nil || *ev.Remaining != 0.42 {
-		t.Errorf("event lacks credits 0.002 (two requests of 0.001) and remaining 0.42: %s", log)
+	if ev.Credits == nil || *ev.Credits != 20 || ev.Remaining == nil || *ev.Remaining != 4200 {
+		t.Errorf("event lacks credits 20 (two requests of 10) and remaining 4200: %s", log)
 	}
 }
 
@@ -267,16 +267,17 @@ func TestLowBudgetWarning(t *testing.T) {
 	for _, tc := range []struct {
 		remaining, limit string
 		want             bool
+		line             string
 	}{
-		{"0.05", "1", true},
-		{"0.5", "1", false},
-		{"0.05", "", true},   // no limit header: the limit is $1
-		{"0.20", "", false},  // no limit header
-		{"0.20", "10", true}, // a tenth of a $10 limit is $1
+		{"500", "10000", true, "openalex: 500 of 10000 credits left today\n"},
+		{"5000", "10000", false, ""},
+		{"900", "", true, "openalex: 900 of 10000 credits left today\n"}, // no limit header: 10000
+		{"1500", "", false, ""},
+		{"1500", "20000", true, "openalex: 1500 of 20000 credits left today\n"},
 	} {
 		t.Run(tc.remaining+"/"+tc.limit, func(t *testing.T) {
 			fixtureStore(t)
-			openAlexCostServer(t, "0.001", tc.remaining, tc.limit)
+			openAlexCostServer(t, "10", tc.remaining, tc.limit)
 			var err error
 			var stdout string
 			stderr := captureStderr(t, func() {
@@ -285,14 +286,16 @@ func TestLowBudgetWarning(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			line := "openalex: $" + tc.remaining + " of the day's budget left\n"
-			if got := strings.Contains(stderr, line); got != tc.want {
-				t.Errorf("stderr %q: has warning = %v, want %v", stderr, got, tc.want)
+			if tc.want && !strings.Contains(stderr, tc.line) {
+				t.Errorf("stderr %q lacks the warning %q", stderr, tc.line)
 			}
-			if strings.Count(stderr, "budget left") > 1 {
+			if !tc.want && strings.Contains(stderr, "credits left") {
+				t.Errorf("stderr %q has an unwanted warning", stderr)
+			}
+			if strings.Count(stderr, "credits left") > 1 {
 				t.Errorf("warning repeated: %q", stderr)
 			}
-			if strings.Contains(stdout, "budget left") {
+			if strings.Contains(stdout, "credits left") {
 				t.Errorf("warning on stdout: %q", stdout)
 			}
 		})
@@ -312,7 +315,7 @@ func TestBudget429EventAndWarning(t *testing.T) {
 	_, dir := fixtureStore(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Limit", "1")
+		w.Header().Set("X-RateLimit-Limit", "10000")
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"message":"Insufficient budget"}`))
 	}))
@@ -323,14 +326,15 @@ func TestBudget429EventAndWarning(t *testing.T) {
 	stderr := captureStderr(t, func() {
 		captureStdout(t, func() { err = runRefs([]string{"W100"}) })
 	})
-	if err == nil || !strings.HasSuffix(err.Error(), "the budget resets at midnight UTC.") {
+	if err == nil || !strings.Contains(err.Error(), "credits are used up") ||
+		!strings.HasSuffix(err.Error(), "the budget resets at midnight UTC.") {
 		t.Fatalf("err = %v", err)
 	}
 	log := readEventLog(t, dir)
 	if !strings.Contains(log, `"remaining":0`) || strings.Contains(log, `"credits"`) {
 		t.Errorf("event should carry remaining 0 and no credits:\n%s", log)
 	}
-	if !strings.Contains(stderr, "openalex: $0.00 of the day's budget left\n") {
+	if !strings.Contains(stderr, "openalex: 0 of 10000 credits left today\n") {
 		t.Errorf("stderr lacks the warning: %q", stderr)
 	}
 }

@@ -599,9 +599,9 @@ func TestOpenAlex401KeyRejected(t *testing.T) {
 
 func TestOpenAlexRecordsCost(t *testing.T) {
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-RateLimit-Credits-Used", "0.001")
-		w.Header().Set("X-RateLimit-Remaining", "0.42")
-		w.Header().Set("X-RateLimit-Limit", "1")
+		w.Header().Set("X-RateLimit-Credits-Used", "10")
+		w.Header().Set("X-RateLimit-Remaining", "4200")
+		w.Header().Set("X-RateLimit-Limit", "10000")
 		io.WriteString(w, openAlexHoeffding)
 	})
 	if _, _, ok := o.LastCost(); ok {
@@ -611,11 +611,11 @@ func TestOpenAlexRecordsCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	credits, remaining, ok := o.LastCost()
-	if !ok || credits != 0.001 || remaining != 0.42 {
-		t.Errorf("LastCost = %v, %v, %v; want 0.001, 0.42, true", credits, remaining, ok)
+	if !ok || credits != 10 || remaining != 4200 {
+		t.Errorf("LastCost = %v, %v, %v; want 10, 4200, true", credits, remaining, ok)
 	}
-	if got := o.LastLimit(); got != 1 {
-		t.Errorf("LastLimit = %v, want 1", got)
+	if got := o.LastLimit(); got != 10000 {
+		t.Errorf("LastLimit = %v, want 10000", got)
 	}
 }
 
@@ -623,9 +623,9 @@ func TestOpenAlexCostSumsCredits(t *testing.T) {
 	calls := 0
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		credits, remaining := "0.001", "0.42"
+		credits, remaining := "10", "4200"
 		if calls == 2 {
-			credits, remaining = "0.0001", "0.4189"
+			credits, remaining = "1", "4190"
 		}
 		w.Header().Set("X-RateLimit-Credits-Used", credits)
 		w.Header().Set("X-RateLimit-Remaining", remaining)
@@ -637,8 +637,8 @@ func TestOpenAlexCostSumsCredits(t *testing.T) {
 		}
 	}
 	credits, remaining, ok := o.LastCost()
-	if !ok || credits != 0.0011 || remaining != 0.4189 {
-		t.Errorf("LastCost = %v, %v, %v; want 0.0011, 0.4189, true", credits, remaining, ok)
+	if !ok || credits != 11 || remaining != 4190 {
+		t.Errorf("LastCost = %v, %v, %v; want 11, 4190, true", credits, remaining, ok)
 	}
 }
 
@@ -647,7 +647,7 @@ func TestOpenAlexCostAbsentOrMalformed(t *testing.T) {
 	o := openAlexServer(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if calls == 1 {
-			w.Header().Set("X-RateLimit-Remaining", "0.42")
+			w.Header().Set("X-RateLimit-Remaining", "4200")
 		}
 		w.Header().Set("X-RateLimit-Credits-Used", "lots")
 		io.WriteString(w, openAlexHoeffding)

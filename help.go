@@ -111,11 +111,12 @@ related and chain log with source "openalex"; besides ordinary failures
 their outcomes are openalex-unknown (OpenAlex does not know the work asked
 for), openalex-no-refs (a found article with no references listed) and
 openalex-unresolved (a bibliography entry related or chain could not
-find). OpenAlex events also carry credits, the dollars the command's
-OpenAlex requests cost, and remaining, the dollars left of the day's
-budget, each read from its response header and left out when no
-response carried it. A command that leaves under a tenth of the day's
-budget prints a warning to stderr.
+find). OpenAlex events also carry credits, the number of OpenAlex
+credits the command's requests cost (10 for a search such as discover, 1
+for a filter or title lookup; a free key gets 10000 a day), and
+remaining, the credits left today, each read from its response header and
+left out when no response carried it. A command that leaves under a
+tenth of the day's credits prints a warning to stderr.
 
 The store location comes from the -store flag when given, and from the
 config file otherwise (~/.paper.json, or the file named by
