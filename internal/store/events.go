@@ -17,6 +17,8 @@
 package store
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
@@ -45,22 +47,52 @@ type Event struct {
 	Duration int64  `json:"duration_ms,omitzero"`
 	Detail   string `json:"detail,omitzero"` // first line of the error, for outcomes other than "ok"
 
+	// Set by LogEvent from SetInvocation when empty.
+	Run     string `json:"run,omitzero"`     // identifies one invocation of the tool
+	Session string `json:"session,omitzero"` // value of PAPER_SESSION
+
 	// OpenAlex commands only, from the rate limit headers; nil when the
 	// headers were absent.
 	Credits   *float64 `json:"credits,omitzero"`   // OpenAlex credits the command's requests cost
 	Remaining *float64 `json:"remaining,omitzero"` // credits left today
 }
 
+// invocationRun and invocationSession are stamped onto every event by
+// LogEvent; see SetInvocation.
+var invocationRun, invocationSession string
+
+// SetInvocation sets the run ID and session that LogEvent copies into every
+// event whose Run or Session is empty. It is called once, at program start.
+func SetInvocation(run, session string) {
+	invocationRun, invocationSession = run, session
+}
+
+// NewRunID returns a fresh run ID: 16 lowercase hex characters from
+// crypto/rand.
+func NewRunID() string {
+	var b [8]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
 // LogEvent appends e as one JSON line to events/<hostname>.jsonl under the
 // store root, creating the directory as needed. Best-effort by contract:
 // LogEvent never returns an error and never panics; any failure
 // (unwritable store, hostname lookup failure) is silently ignored.
-// e.When is filled with the current time if empty.
+// e.When is filled with the current time if empty, and e.Run and e.Session
+// with the values from SetInvocation.
 func (s *Store) LogEvent(e Event) {
 	defer func() { recover() }()
 
 	if e.When == "" {
 		e.When = time.Now().Format(eventTimeLayout)
+	}
+
+	if e.Run == "" {
+		e.Run = invocationRun
+	}
+	if e.Session == "" {
+		e.Session = invocationSession
 	}
 
 	dir := filepath.Join(s.Root, "events")

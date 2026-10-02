@@ -20,6 +20,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -54,4 +55,70 @@ func TestLogEventBestEffort(t *testing.T) {
 	// an unusable store root must neither error nor panic
 	s := &Store{Root: string([]byte{0})}
 	s.LogEvent(Event{Command: "fetch", Outcome: "ok"})
+}
+
+// readEventLines returns the decoded raw lines of the store's event log.
+func readEventLines(t *testing.T, s *Store) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(s.Root, "events", "*.jsonl"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("want exactly one events file, got %v (%v)", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+}
+
+func TestLogEventStampsInvocation(t *testing.T) {
+	t.Cleanup(func() { SetInvocation("", "") })
+	SetInvocation("0123456789abcdef", "sess-1")
+
+	s := testStore(t)
+	s.LogEvent(Event{Command: "fetch", Outcome: "ok"})
+	s.LogEvent(Event{Command: "search", Outcome: "no-hits"})
+
+	lines := readEventLines(t, s)
+	if len(lines) != 2 {
+		t.Fatalf("want 2 lines, got %d", len(lines))
+	}
+	for _, line := range lines {
+		var e Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Run != "0123456789abcdef" || e.Session != "sess-1" {
+			t.Errorf("got run %q session %q in %s", e.Run, e.Session, line)
+		}
+	}
+}
+
+func TestLogEventWithoutSession(t *testing.T) {
+	t.Cleanup(func() { SetInvocation("", "") })
+	SetInvocation("0123456789abcdef", "")
+
+	s := testStore(t)
+	s.LogEvent(Event{Command: "fetch", Outcome: "ok"})
+
+	line := readEventLines(t, s)[0]
+	if strings.Contains(line, `"session"`) {
+		t.Errorf("session key present: %s", line)
+	}
+	if !strings.Contains(line, `"run":"0123456789abcdef"`) {
+		t.Errorf("run missing: %s", line)
+	}
+}
+
+func TestNewRunID(t *testing.T) {
+	re := regexp.MustCompile(`^[0-9a-f]{16}$`)
+	a, b := NewRunID(), NewRunID()
+	if a == b {
+		t.Errorf("two run IDs are equal: %s", a)
+	}
+	for _, id := range []string{a, b} {
+		if !re.MatchString(id) {
+			t.Errorf("run ID %q does not match", id)
+		}
+	}
 }

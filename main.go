@@ -19,6 +19,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"seehuhn.de/go/paper/internal/store"
 )
 
 type command struct {
@@ -98,6 +100,7 @@ func printTopicHelp(name string) error {
 }
 
 func main() {
+	store.SetInvocation(store.NewRunID(), os.Getenv("PAPER_SESSION"))
 	if err := dispatch(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "paper: %v\n", err)
 		os.Exit(1)
