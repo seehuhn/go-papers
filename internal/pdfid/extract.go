@@ -54,9 +54,14 @@ type DocText struct {
 	// TopLines holds the first page's text lines ordered by descending
 	// font size: the largest-font run(s) first.  Used for title guessing.
 	// TopSizes is the parallel slice of font sizes: TopSizes[i] is the
-	// font size of TopLines[i].  The two slices always have equal length.
+	// font size of TopLines[i].  TopIndex is likewise parallel:
+	// TopIndex[i] is the position of TopLines[i] among the page's lines in
+	// reading order, so a title wrapped over several lines can be told
+	// from same-size text elsewhere on the page.  The three slices always
+	// have equal length.
 	TopLines []string
 	TopSizes []float64
+	TopIndex []int
 	// XMP is the text of every property in the document-level XMP
 	// metadata packet, collected by walking Packet.Properties and joined
 	// with newlines; "" when the document has no metadata stream.  It is
@@ -140,7 +145,7 @@ func Extract(path string, maxPages int) (*DocText, error) {
 		}
 		res.Pages = append(res.Pages, e.text())
 		if first {
-			res.TopLines, res.TopSizes = e.topLines()
+			res.TopLines, res.TopSizes, res.TopIndex = e.topLines()
 		}
 
 		numPages++
@@ -296,10 +301,11 @@ func hasText(pages []string) bool {
 }
 
 // sizedLine is a line of text together with the largest font size used in
-// the line.
+// the line, and its position among the page's lines in reading order.
 type sizedLine struct {
-	text string
-	size float64
+	text  string
+	size  float64
+	index int
 }
 
 // extractor collects the text of a PDF page.  It is modelled on the
@@ -420,9 +426,10 @@ func (e *extractor) text() string {
 
 // topLines returns the lines of the page most recently processed, ordered
 // by descending font size, together with the font size of each line in
-// the parallel sizes slice (sizes[i] is the font size of lines[i]).
+// the parallel sizes slice (sizes[i] is the font size of lines[i]) and the
+// page-order position of each line in the parallel index slice.
 // Lines of equal size keep their original order.
-func (e *extractor) topLines() (lines []string, sizes []float64) {
+func (e *extractor) topLines() (lines []string, sizes []float64, index []int) {
 	e.flushLine()
 	ls := slices.Clone(e.lines)
 	slices.SortStableFunc(ls, func(a, b sizedLine) int {
@@ -431,11 +438,13 @@ func (e *extractor) topLines() (lines []string, sizes []float64) {
 
 	lines = make([]string, len(ls))
 	sizes = make([]float64, len(ls))
+	index = make([]int, len(ls))
 	for i, l := range ls {
 		lines[i] = l.text
 		sizes[i] = l.size
+		index[i] = l.index
 	}
-	return lines, sizes
+	return lines, sizes, index
 }
 
 // writeSpace emits a space, collapsing it against any preceding whitespace.
@@ -488,7 +497,7 @@ func (e *extractor) flushLine() {
 	}
 	text := strings.TrimSpace(e.line.String())
 	if text != "" {
-		e.lines = append(e.lines, sizedLine{text: text, size: e.lineSize})
+		e.lines = append(e.lines, sizedLine{text: text, size: e.lineSize, index: len(e.lines)})
 	}
 	e.line.Reset()
 	e.lineSize = 0

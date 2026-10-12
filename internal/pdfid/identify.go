@@ -317,7 +317,7 @@ func tier3(d *DocText, search SearchFunc) ID {
 		return ID{}
 	}
 
-	guess := titleGuess(d.TopLines, d.TopSizes)
+	guess := titleGuess(d.TopLines, d.TopSizes, d.TopIndex)
 	if guess == "" {
 		guess = metadataTitle(d)
 	}
@@ -379,29 +379,38 @@ func metadataTitle(d *DocText) string {
 // titleGuess picks the tier-3 title guess from topLines, which holds the
 // first page's lines ordered by descending font size (largest first), and
 // topSizes, the parallel slice of font sizes (topSizes[i] is the font
-// size of topLines[i]; see DocText.TopSizes).
+// size of topLines[i]; see DocText.TopSizes), and topIndex, the parallel
+// slice of page-order positions (see DocText.TopIndex).
 //
 // The leading run of topLines entries that share the largest font size
-// (topSizes[0]) is joined with spaces into one candidate, since a
-// wrapped title commonly spans two or more same-size lines. If that
-// candidate has at least tier3MinTokens tokens, it is the guess. If it is
-// too short (e.g. the largest-font run is just a running head or a
-// decorative mark), the remaining lines are checked individually, in
-// font-size order, and the first one with at least tier3MinTokens tokens
-// is returned.
+// (topSizes[0]) and follow one another on the page (topIndex increases
+// by exactly 1 from entry to entry) is joined with spaces into one
+// candidate, since a wrapped title commonly spans two or more same-size
+// lines. If that candidate has at least tier3MinTokens tokens, it is the
+// guess. If it is too short (e.g. the largest-font run is just a running
+// head or a decorative mark), the remaining lines are checked
+// individually, in font-size order, and the first one with at least
+// tier3MinTokens tokens is returned.
+//
+// Adjacency matters because some journals set the title in the body
+// size: the body lines then sort right behind the title, and without the
+// page-order check the "title" became a whole first page of text.
 //
 // If topSizes does not have the same length as topLines - which callers
 // constructing a DocText by hand, such as tests, may leave unset - no
 // join is attempted and this degrades to considering topLines[0] alone,
 // then falling through line by line exactly as before TopSizes existed.
-func titleGuess(topLines []string, topSizes []float64) string {
+// If only topIndex is missing, the run is cut by font size alone.
+func titleGuess(topLines []string, topSizes []float64, topIndex []int) string {
 	if len(topLines) == 0 {
 		return ""
 	}
 
 	sameSize := len(topSizes) == len(topLines)
 	end := 1
-	for end < len(topLines) && sameSize && topSizes[end] == topSizes[0] {
+	adjacent := len(topIndex) == len(topLines)
+	for end < len(topLines) && sameSize && topSizes[end] == topSizes[0] &&
+		(!adjacent || topIndex[end] == topIndex[end-1]+1) {
 		end++
 	}
 

@@ -452,3 +452,16 @@ func TestIdentifyTier2Memoises(t *testing.T) {
 		t.Errorf("calls[%q] = %d, want exactly 1", "10.1234/abc.", calls["10.1234/abc."])
 	}
 }
+
+// TestTitleGuessStopsAtPageGap checks that the same-size run is cut where
+// the lines stop being adjacent on the page: a body line that merely has
+// the title's font size must not be joined to it.
+func TestTitleGuessStopsAtPageGap(t *testing.T) {
+	lines := []string{"THE CLASSIFICATION OF CRITICAL", "POINTS OF HEAT KERNEL", "ON TORI", "1. Introduction and body text"}
+	sizes := []float64{9.96, 9.96, 9.96, 9.96}
+	index := []int{0, 1, 2, 5}
+	const want = "THE CLASSIFICATION OF CRITICAL POINTS OF HEAT KERNEL ON TORI"
+	if got := titleGuess(lines, sizes, index); got != want {
+		t.Errorf("titleGuess = %q, want %q", got, want)
+	}
+}
