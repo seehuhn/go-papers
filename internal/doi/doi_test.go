@@ -166,6 +166,25 @@ func TestCandidatesKeepsUnrelatedShortMatch(t *testing.T) {
 	}
 }
 
+// TestCandidatesStopsAtControlAndUnicodeSpace checks that a DOI glued to a
+// control character or a Unicode space by PDF text extraction ends at that
+// character, rather than swallowing it into the suffix.
+func TestCandidatesStopsAtControlAndUnicodeSpace(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"see 10.1073/pnas.2302283120\b and", "10.1073/pnas.2302283120"},
+		{"doi 10.1073/pnas.2302283120   1 here", "10.1073/pnas.2302283120"},
+	}
+	for _, c := range cases {
+		got := Candidates(c.text)
+		if len(got) == 0 || got[0] != c.want {
+			t.Errorf("Candidates(%q) = %q, want first candidate %q", c.text, got, c.want)
+		}
+	}
+}
+
 func TestCandidatesNone(t *testing.T) {
 	if got := Candidates("no identifiers here"); got != nil {
 		t.Errorf("Candidates = %q, want nil", got)

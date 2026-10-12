@@ -68,11 +68,13 @@ func Syntactic(s string) bool {
 }
 
 // candidatePattern finds a greedy DOI-shaped run in prose: a registrant,
-// a "/", and everything up to the next whitespace (or the end of the
-// text). It never excludes a suffix character, so it never truncates a
-// SICI DOI the way the old doiRegex did; that is the caller's job via
-// the trim ladder in Candidates, not this pattern's.
-var candidatePattern = regexp.MustCompile(registrant + `/\S+`)
+// a "/", and everything up to the next whitespace, separator or control
+// character (or the end of the text). PDF text can glue such characters
+// directly onto a DOI, and DOI characters are all printable, so ending the
+// run there cannot truncate a real DOI. It never excludes punctuation, so
+// it never truncates a SICI DOI the way the old doiRegex did; that is the
+// caller's job via the trim ladder in Candidates, not this pattern's.
+var candidatePattern = regexp.MustCompile(registrant + `/[^\s\p{Z}\p{C}]+`)
 
 // trimChars are the trailing punctuation bytes Candidates strips one at
 // a time when building a match's trim ladder. This is deliberately the
